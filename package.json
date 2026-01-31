@@ -1,0 +1,42 @@
+{
+  "name": "@arke-institute/rhiza",
+  "version": "0.1.0",
+  "description": "Workflow protocol for Arke - cascading handoff pattern for distributed actions",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@arke-institute/sdk": "^2.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.0.0"
+  },
+  "keywords": [
+    "arke",
+    "workflow",
+    "orchestration",
+    "distributed",
+    "protocol"
+  ],
+  "author": "Arke Institute",
+  "license": "MIT"
+}
