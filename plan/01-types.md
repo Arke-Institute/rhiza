@@ -6,113 +6,167 @@ All types are defined in `src/types/`. This document provides the complete type 
 
 ---
 
-## Rhiza Definition Types
+## Entity Types
 
-### `src/types/rhiza.ts`
+### Klados Entity
+
+A klados is a **standalone, reusable action**. It knows HOW to do something, but not WHAT comes next.
 
 ```typescript
+// src/types/klados.ts
+
 /**
- * Rhiza - A workflow definition
+ * KladosEntity - A standalone action entity
  *
- * The root structure that defines a graph of kladoi (actions)
- * with handoff rules between them.
+ * Kladoi are first-class entities that can be:
+ * - Invoked directly via POST /kladoi/:id/invoke
+ * - Composed into workflows (rhizai)
+ * - Reused across multiple rhizai
  */
-export interface Rhiza {
+export interface KladosEntity {
   /** Unique identifier (Arke entity ID) */
   id: string;
 
-  /** Human-readable name */
-  name: string;
+  /** Entity type */
+  type: 'klados';
 
-  /** Semantic version */
-  version: string;
+  properties: KladosProperties;
 
-  /** Optional description */
-  description?: string;
-
-  /** Entry point - which klados starts the workflow */
-  entry: string;
-
-  /** All kladoi in this workflow, keyed by name */
-  kladoi: Record<string, KladosSpec>;
+  relationships?: Array<{
+    predicate: string;
+    peer: string;
+    peer_type?: string;
+    peer_label?: string;
+    properties?: Record<string, unknown>;
+  }>;
 }
 
-/**
- * KladosSpec - Specification for a single action in the workflow
- */
-export interface KladosSpec {
-  /** Agent ID to invoke for this klados */
-  action: string;
+export interface KladosProperties {
+  /** Human-readable name */
+  label: string;
 
-  /** Human-readable description */
+  /** Description of what this klados does */
   description?: string;
+
+  /** Endpoint URL where this klados is deployed */
+  endpoint: string;
+
+  /** Permissions required on target collection */
+  actions_required: string[];
 
   /** Input contract - what this klados accepts */
-  accepts: AcceptsSpec;
+  accepts: ContractSpec;
 
   /** Output contract - what this klados produces */
-  produces: ProducesSpec;
+  produces: ContractSpec;
 
-  /** What happens after this klados completes */
-  then: ThenSpec;
+  /** Optional JSON Schema for additional input parameters */
+  input_schema?: Record<string, unknown>;
+
+  /** Status */
+  status: 'development' | 'active' | 'disabled';
+
+  /** When endpoint was verified */
+  endpoint_verified_at?: string;
+
+  /** Timestamps */
+  created_at?: string;
+  updated_at?: string;
 }
 
 /**
- * AcceptsSpec - Input contract
+ * ContractSpec - Input/output contract
  */
-export interface AcceptsSpec {
+export interface ContractSpec {
   /**
-   * Accepted content types
-   * Use ["*"] to accept anything
+   * Accepted/produced content types
+   * Use ["*"] to accept/produce anything
    * Examples: ["file/pdf"], ["file/jpeg", "file/png"], ["*"]
    */
   types: string[];
 
   /**
-   * Input cardinality
-   * - 'one': Receives a single entity
-   * - 'many': Receives multiple entities (array)
+   * Cardinality
+   * - 'one': Single entity
+   * - 'many': Multiple entities (array)
    */
   cardinality: 'one' | 'many';
 }
+```
+
+### Rhiza Entity
+
+A rhiza **composes kladoi** into a flow. It defines WHAT happens, in WHAT order.
+
+```typescript
+// src/types/rhiza.ts
 
 /**
- * ProducesSpec - Output contract
+ * RhizaEntity - A workflow entity
+ *
+ * Rhizai compose kladoi into executable workflows.
+ * They define the flow (what klados invokes what next).
  */
-export interface ProducesSpec {
-  /**
-   * Produced content types
-   * Use ["*"] to indicate dynamic types
-   * Examples: ["file/jpeg"], ["text/ocr"], ["*"]
-   */
-  types: string[];
+export interface RhizaEntity {
+  /** Unique identifier (Arke entity ID) */
+  id: string;
 
-  /**
-   * Output cardinality
-   * - 'one': Produces a single entity
-   * - 'many': Produces multiple entities
-   */
-  cardinality: 'one' | 'many';
+  /** Entity type */
+  type: 'rhiza';
+
+  properties: RhizaProperties;
+
+  relationships?: Array<{
+    predicate: string;
+    peer: string;
+    peer_type?: string;
+    peer_label?: string;
+    properties?: Record<string, unknown>;
+  }>;
+}
+
+export interface RhizaProperties {
+  /** Human-readable name */
+  label: string;
+
+  /** Description of what this workflow does */
+  description?: string;
+
+  /** Semantic version */
+  version: string;
+
+  /** Entry point - klados ID that starts the workflow */
+  entry: string;
+
+  /** Flow definition - what happens after each klados */
+  flow: Record<string, FlowStep>;
+
+  /** Status */
+  status: 'development' | 'active' | 'disabled';
+
+  /** Timestamps */
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * FlowStep - What happens after a klados completes
+ */
+export interface FlowStep {
+  /** Handoff specification */
+  then: ThenSpec;
 }
 
 /**
  * ThenSpec - Handoff specification
- *
- * Defines what happens after a klados completes.
  */
 export type ThenSpec =
-  | { done: true }              // Terminal - workflow ends here
-  | { pass: TargetRef }         // 1:1 - pass outputs directly to next
-  | { scatter: TargetRef }      // 1:N - invoke next once per output (fan-out)
-  | { gather: TargetRef }       // N:1 - wait for batch, then invoke (fan-in)
+  | { done: true }              // Terminal - workflow ends
+  | { pass: string }            // 1:1 - klados ID
+  | { scatter: string }         // 1:N fan-out - klados ID
+  | { gather: string }          // N:1 fan-in - klados ID
+  | { rhiza: string }           // Sub-workflow - rhiza ID
   | { route: RouteRule[] };     // Conditional routing
-
-/**
- * TargetRef - Reference to next klados or sub-rhiza
- */
-export type TargetRef =
-  | string                      // Local klados name: "ocr-service"
-  | { rhiza: string };          // Sub-workflow: { rhiza: "IIrhiza123..." }
 
 /**
  * RouteRule - Conditional routing rule
@@ -127,9 +181,6 @@ export interface RouteRule {
 
 /**
  * WhereCondition - Simple property-based matching
- *
- * For now, only supports equality matching on entity properties.
- * Future: Could add 'in', 'matches', 'and', 'or' operators.
  */
 export interface WhereCondition {
   /** Property name to check (e.g., "type", "content_type") */
@@ -144,19 +195,19 @@ export interface WhereCondition {
 
 ## Request Types
 
-### `src/types/request.ts`
+### Klados Request
+
+What a klados receives when invoked.
 
 ```typescript
-import type { Rhiza } from './rhiza';
+// src/types/request.ts
 
 /**
  * KladosRequest - What a klados receives when invoked
- *
- * This extends the standard AgentJobRequest with rhiza-specific context.
  */
 export interface KladosRequest {
   // ═══════════════════════════════════════════════════════════════
-  // Standard job fields (same as AgentJobRequest)
+  // Standard job fields
   // ═══════════════════════════════════════════════════════════════
 
   /** Unique job identifier */
@@ -181,13 +232,13 @@ export interface KladosRequest {
   network: 'test' | 'main';
 
   // ═══════════════════════════════════════════════════════════════
-  // Rhiza-specific context
+  // Workflow context (present when invoked as part of a rhiza)
   // ═══════════════════════════════════════════════════════════════
 
-  /** Workflow context */
-  rhiza: RhizaContext;
+  /** Workflow context - present when invoked via rhiza */
+  rhiza?: RhizaContext;
 
-  /** Batch context (if part of scatter) */
+  /** Batch context - present when part of scatter */
   batch?: BatchContext;
 }
 
@@ -198,10 +249,10 @@ export interface RhizaContext {
   /** Rhiza entity ID */
   id: string;
 
-  /** Full rhiza definition */
-  definition: Rhiza;
+  /** Flow definition (what to do next) */
+  flow: Record<string, FlowStep>;
 
-  /** Current klados name (position in workflow) */
+  /** Current klados ID (my position in the workflow) */
   position: string;
 
   /**
@@ -234,8 +285,8 @@ export interface ParentContext {
   /** What to do when we complete */
   on_complete: 'update_batch' | 'invoke_next';
 
-  /** If on_complete === 'invoke_next', the target to invoke */
-  next_target?: TargetRef;
+  /** Target to invoke when complete (klados or rhiza ID) */
+  next_target?: string;
 }
 
 /**
@@ -251,7 +302,7 @@ export interface BatchContext {
   /** Total slots in batch */
   total: number;
 
-  /** Klados that receives gathered results */
+  /** Klados ID that receives gathered results */
   gather_target: string;
 }
 ```
@@ -260,14 +311,11 @@ export interface BatchContext {
 
 ## Response Types
 
-### `src/types/response.ts`
-
 ```typescript
+// src/types/response.ts
+
 /**
- * KladosResponse - What a klados returns after processing
- *
- * This is the internal response used by the protocol.
- * The HTTP response to Arke uses the standard agent response format.
+ * KladosResponse - What a klados returns after accepting/rejecting
  */
 export interface KladosResponse {
   /** Whether the klados accepted the job */
@@ -309,17 +357,15 @@ export interface KladosResult {
 
 ## Log Types
 
-### `src/types/log.ts`
-
 ```typescript
+// src/types/log.ts
+
 import type { KladosRequest } from './request';
-import type { TargetRef } from './rhiza';
 
 /**
  * KladosLogEntry - Log entry written by each klados
  *
  * This is the critical data structure for resumability.
- * It records everything needed to resume from this point.
  */
 export interface KladosLogEntry {
   /** Log entry entity ID */
@@ -332,11 +378,11 @@ export interface KladosLogEntry {
   // Identity
   // ═══════════════════════════════════════════════════════════════
 
-  /** Rhiza entity ID */
-  rhiza_id: string;
+  /** Klados entity ID */
+  klados_id: string;
 
-  /** Klados name within rhiza */
-  klados: string;
+  /** Rhiza entity ID (if part of workflow) */
+  rhiza_id?: string;
 
   /** Job ID */
   job_id: string;
@@ -393,7 +439,6 @@ export interface KladosLogEntry {
   error?: {
     code: string;
     message: string;
-    /** Whether this error can be retried */
     retryable: boolean;
   };
 
@@ -401,10 +446,6 @@ export interface KladosLogEntry {
   // Handoffs (THE KEY TO RESUMABILITY)
   // ═══════════════════════════════════════════════════════════════
 
-  /**
-   * What we handed off to next
-   * This records every invocation we made, enabling resume.
-   */
   handoffs?: HandoffRecord[];
 }
 
@@ -413,9 +454,9 @@ export interface KladosLogEntry {
  */
 export interface HandoffRecord {
   /** Handoff type */
-  type: 'pass' | 'scatter' | 'gather' | 'route';
+  type: 'pass' | 'scatter' | 'gather' | 'rhiza' | 'route';
 
-  /** Target klados name or rhiza ID */
+  /** Target ID (klados or rhiza) */
   target: string;
 
   /** Whether target is a klados or rhiza */
@@ -430,8 +471,6 @@ export interface HandoffRecord {
 
 /**
  * InvocationRecord - Record of a single invocation
- *
- * Contains everything needed to retry this exact invocation.
  */
 export interface InvocationRecord {
   /** Job ID we created for the invocation */
@@ -446,28 +485,8 @@ export interface InvocationRecord {
   /** Current status of this invocation */
   status: 'pending' | 'done' | 'error';
 
-  /**
-   * THE RESUMABILITY DATA
-   * The exact request we made, for replay on resume
-   */
+  /** The exact request we made (for replay on resume) */
   request: KladosRequest;
-}
-
-/**
- * JobLog - Complete log structure written to job collection
- *
- * This wraps KladosLogEntry with file metadata.
- */
-export interface JobLog {
-  /** Log entry data */
-  entry: KladosLogEntry;
-
-  /** Agent info */
-  agent_id: string;
-  agent_version: string;
-
-  /** Human-readable log messages */
-  messages: LogMessage[];
 }
 
 /**
@@ -485,14 +504,11 @@ export interface LogMessage {
 
 ## Batch Types
 
-### `src/types/batch.ts`
-
 ```typescript
+// src/types/batch.ts
+
 /**
  * BatchEntity - Entity for coordinating scatter/gather
- *
- * Created by scatter, updated by each scattered klados,
- * used to trigger gather when all slots complete.
  */
 export interface BatchEntity {
   /** Entity ID */
@@ -511,10 +527,10 @@ export interface BatchProperties {
   /** Job ID */
   job_id: string;
 
-  /** Klados that created this batch */
+  /** Klados ID that created this batch */
   source_klados: string;
 
-  /** Klados that receives gathered results */
+  /** Klados ID that receives gathered results */
   gather_klados: string;
 
   /** Total number of slots */
@@ -567,10 +583,8 @@ export interface BatchSlot {
 
 ## Status Types
 
-### `src/types/status.ts`
-
 ```typescript
-import type { KladosLogEntry } from './log';
+// src/types/status.ts
 
 /**
  * WorkflowStatus - Overall workflow execution status
@@ -588,8 +602,8 @@ export interface WorkflowStatus {
   /** Progress counters */
   progress: ProgressCounters;
 
-  /** Currently executing klados (if running) */
-  current_klados?: string[];
+  /** Currently executing kladoi (if running) */
+  current_kladoi?: string[];
 
   /** Simplified log chain for debugging */
   log_chain: LogChainEntry[];
@@ -606,19 +620,10 @@ export interface WorkflowStatus {
  * ProgressCounters - Aggregated progress
  */
 export interface ProgressCounters {
-  /** Total kladoi expected to run */
   total: number;
-
-  /** Kladoi not yet started */
   pending: number;
-
-  /** Kladoi currently running */
   running: number;
-
-  /** Kladoi completed successfully */
   done: number;
-
-  /** Kladoi failed */
   error: number;
 }
 
@@ -627,7 +632,7 @@ export interface ProgressCounters {
  */
 export interface LogChainEntry {
   log_id: string;
-  klados: string;
+  klados_id: string;
   status: 'running' | 'done' | 'error';
   started_at: string;
   completed_at?: string;
@@ -639,7 +644,7 @@ export interface LogChainEntry {
  */
 export interface ErrorSummary {
   log_id: string;
-  klados: string;
+  klados_id: string;
   job_id: string;
   error: {
     code: string;
@@ -652,30 +657,16 @@ export interface ErrorSummary {
  * ResumeResult - Result of resume operation
  */
 export interface ResumeResult {
-  /** Number of jobs resumed */
   resumed: number;
-
-  /** Number of jobs skipped (not retryable) */
   skipped: number;
-
-  /** Details of resumed jobs */
   jobs: ResumedJob[];
 }
 
 export interface ResumedJob {
-  /** Original failed job ID */
   original_job_id: string;
-
-  /** New job ID (retry) */
   new_job_id: string;
-
-  /** Klados name */
-  klados: string;
-
-  /** Target entity */
+  klados_id: string;
   target: string;
-
-  /** Original error message */
   error: string;
 }
 ```
@@ -684,17 +675,22 @@ export interface ResumedJob {
 
 ## Index Exports
 
-### `src/types/index.ts`
-
 ```typescript
-// Rhiza definition types
+// src/types/index.ts
+
+// Klados entity types
 export type {
-  Rhiza,
-  KladosSpec,
-  AcceptsSpec,
-  ProducesSpec,
+  KladosEntity,
+  KladosProperties,
+  ContractSpec,
+} from './klados';
+
+// Rhiza entity types
+export type {
+  RhizaEntity,
+  RhizaProperties,
+  FlowStep,
   ThenSpec,
-  TargetRef,
   RouteRule,
   WhereCondition,
 } from './rhiza';
@@ -718,7 +714,6 @@ export type {
   KladosLogEntry,
   HandoffRecord,
   InvocationRecord,
-  JobLog,
   LogMessage,
 } from './log';
 

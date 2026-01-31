@@ -2,7 +2,9 @@
 
 ## Overview
 
-The handoff module is the core of the protocol. It interprets `then` specs and executes the appropriate handoff operation (pass, scatter, gather, route).
+The handoff module is the core of the protocol. It interprets `then` specs and executes the appropriate handoff operation (pass, scatter, gather, route, rhiza).
+
+Since kladoi are now first-class entities, handoff invokes them via `POST /kladoi/:id/invoke`.
 
 ---
 
@@ -53,6 +55,17 @@ Klados A
     └── where: type = "file/text" → pass → Text Handler
 ```
 
+### Rhiza (Sub-workflow)
+
+Invokes a nested workflow via `POST /rhizai/:id/invoke`.
+
+```
+Klados A
+    ↓ rhiza: "II01rhiza_sub..."
+    └── Sub-workflow executes independently
+        └── When complete, calls back to parent
+```
+
 ---
 
 ## Implementation
@@ -62,10 +75,10 @@ Klados A
 ```typescript
 import type { ArkeClient } from '@arke-institute/sdk';
 import type {
+  KladosEntity,
   RhizaContext,
-  KladosSpec,
+  FlowStep,
   ThenSpec,
-  TargetRef,
   KladosLogEntry,
   HandoffRecord,
   InvocationRecord,
@@ -73,17 +86,20 @@ import type {
 import { createScatter } from './scatter';
 import { completeBatchSlot } from './gather';
 import { matchRoute } from './route';
-import { invokeTarget } from './invoke';
+import { invokeKlados, invokeRhiza } from './invoke';
 
 /**
  * Result of interpreting a then spec
  */
 export interface InterpretResult {
   /** What action was taken */
-  action: 'done' | 'pass' | 'scatter' | 'gather_wait' | 'gather_trigger' | 'route';
+  action: 'done' | 'pass' | 'scatter' | 'gather_wait' | 'gather_trigger' | 'route' | 'rhiza';
 
-  /** Target that was invoked (if any) */
-  target?: TargetRef;
+  /** Target klados ID or rhiza ID that was invoked (if any) */
+  target?: string;
+
+  /** Whether target is klados or rhiza */
+  target_type?: 'klados' | 'rhiza';
 
   /** Invocation records for logging */
   invocations?: InvocationRecord[];
@@ -103,19 +119,18 @@ export interface InterpretResult {
  * Interpret and execute a then spec
  *
  * This is the core handoff logic. It:
- * 1. Examines the then spec
+ * 1. Examines the then spec from the flow
  * 2. Executes the appropriate handoff operation
  * 3. Returns info for logging and status tracking
  */
 export async function interpretThen(
   client: ArkeClient,
   context: RhizaContext,
-  spec: KladosSpec,
+  currentKladosId: string,
+  then: ThenSpec,
   outputs: string[],
   logEntryId: string
 ): Promise<InterpretResult> {
-  const { then } = spec;
-
   // ═══════════════════════════════════════════════════════════════
   // Terminal: workflow ends here
   // ═══════════════════════════════════════════════════════════════
@@ -131,22 +146,25 @@ export async function interpretThen(
   // Pass: 1:1 direct handoff
   // ═══════════════════════════════════════════════════════════════
   if ('pass' in then) {
-    const invocations = await invokeTarget(
+    const targetKladosId = then.pass;
+
+    const invocations = await invokeKlados(
       client,
       context,
-      then.pass,
+      targetKladosId,
       outputs,
       logEntryId
     );
 
     return {
       action: 'pass',
-      target: then.pass,
+      target: targetKladosId,
+      target_type: 'klados',
       invocations,
       handoffRecord: {
         type: 'pass',
-        target: typeof then.pass === 'string' ? then.pass : then.pass.rhiza,
-        target_type: typeof then.pass === 'string' ? 'klados' : 'rhiza',
+        target: targetKladosId,
+        target_type: 'klados',
         invocations,
       },
     };
@@ -156,17 +174,21 @@ export async function interpretThen(
   // Scatter: 1:N fan-out
   // ═══════════════════════════════════════════════════════════════
   if ('scatter' in then) {
+    const targetKladosId = then.scatter;
+
     const scatterResult = await createScatter(
       client,
       context,
-      then.scatter,
+      currentKladosId,
+      targetKladosId,
       outputs,
       logEntryId
     );
 
     return {
       action: 'scatter',
-      target: then.scatter,
+      target: targetKladosId,
+      target_type: 'klados',
       invocations: scatterResult.invocations,
       batch: {
         id: scatterResult.batchId,
@@ -174,8 +196,8 @@ export async function interpretThen(
       },
       handoffRecord: {
         type: 'scatter',
-        target: typeof then.scatter === 'string' ? then.scatter : then.scatter.rhiza,
-        target_type: typeof then.scatter === 'string' ? 'klados' : 'rhiza',
+        target: targetKladosId,
+        target_type: 'klados',
         batch_id: scatterResult.batchId,
         invocations: scatterResult.invocations,
       },
@@ -186,6 +208,8 @@ export async function interpretThen(
   // Gather: N:1 fan-in
   // ═══════════════════════════════════════════════════════════════
   if ('gather' in then) {
+    const targetKladosId = then.gather;
+
     // We must be in a batch context
     if (!context.batch) {
       throw new Error('Gather requires batch context but none provided');
@@ -199,23 +223,24 @@ export async function interpretThen(
 
     if (gatherResult.isLast) {
       // We're the last one - trigger gather target
-      const invocations = await invokeTarget(
+      const invocations = await invokeKlados(
         client,
         context,
-        then.gather,
+        targetKladosId,
         gatherResult.allOutputs!,
         logEntryId
       );
 
       return {
         action: 'gather_trigger',
-        target: then.gather,
+        target: targetKladosId,
+        target_type: 'klados',
         invocations,
         batch: gatherResult,
         handoffRecord: {
           type: 'gather',
-          target: typeof then.gather === 'string' ? then.gather : then.gather.rhiza,
-          target_type: typeof then.gather === 'string' ? 'klados' : 'rhiza',
+          target: targetKladosId,
+          target_type: 'klados',
           invocations,
         },
       };
@@ -225,6 +250,34 @@ export async function interpretThen(
     return {
       action: 'gather_wait',
       batch: gatherResult,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Rhiza: sub-workflow
+  // ═══════════════════════════════════════════════════════════════
+  if ('rhiza' in then) {
+    const subRhizaId = then.rhiza;
+
+    const invocations = await invokeRhiza(
+      client,
+      context,
+      subRhizaId,
+      outputs,
+      logEntryId
+    );
+
+    return {
+      action: 'rhiza',
+      target: subRhizaId,
+      target_type: 'rhiza',
+      invocations,
+      handoffRecord: {
+        type: 'rhiza',
+        target: subRhizaId,
+        target_type: 'rhiza',
+        invocations,
+      },
     };
   }
 
@@ -242,7 +295,8 @@ export async function interpretThen(
     const result = await interpretThen(
       client,
       context,
-      { ...spec, then: matchedRule.then },
+      currentKladosId,
+      matchedRule.then,
       outputs,
       logEntryId
     );
@@ -283,14 +337,13 @@ async function handleSubRhizaComplete(
 
     if (gatherResult.isLast && parent.next_target) {
       // Trigger parent's next step
-      const invocations = await invokeTarget(
+      // Need to switch to parent's context
+      const invocations = await invokeKlados(
         client,
         {
           ...context,
-          // Switch back to parent context
           id: parent.rhiza_id,
-          // Note: we'd need to load parent's rhiza definition here
-          // For now, assume next_target is a klados in parent
+          job_collection: parent.job_collection,
         },
         parent.next_target,
         gatherResult.allOutputs!,
@@ -299,6 +352,8 @@ async function handleSubRhizaComplete(
 
       return {
         action: 'gather_trigger',
+        target: parent.next_target,
+        target_type: 'klados',
         invocations,
         batch: gatherResult,
       };
@@ -312,9 +367,13 @@ async function handleSubRhizaComplete(
 
   if (parent.on_complete === 'invoke_next' && parent.next_target) {
     // Direct invocation of parent's next step
-    const invocations = await invokeTarget(
+    const invocations = await invokeKlados(
       client,
-      context,
+      {
+        ...context,
+        id: parent.rhiza_id,
+        job_collection: parent.job_collection,
+      },
       parent.next_target,
       outputs,
       logEntryId
@@ -323,6 +382,7 @@ async function handleSubRhizaComplete(
     return {
       action: 'pass',
       target: parent.next_target,
+      target_type: 'klados',
       invocations,
     };
   }
@@ -332,17 +392,197 @@ async function handleSubRhizaComplete(
 }
 ```
 
+### `src/handoff/invoke.ts`
+
+```typescript
+import type { ArkeClient } from '@arke-institute/sdk';
+import type {
+  RhizaContext,
+  KladosRequest,
+  BatchContext,
+  InvocationRecord,
+} from '../types';
+import { generateId } from '../utils';
+
+export interface InvokeResult {
+  job_id: string;
+  accepted: boolean;
+  error?: string;
+}
+
+/**
+ * Invoke a klados via POST /kladoi/:id/invoke
+ *
+ * Returns invocation records for logging.
+ */
+export async function invokeKlados(
+  client: ArkeClient,
+  context: RhizaContext,
+  kladosId: string,
+  outputs: string[],
+  fromLogId: string,
+  batchContext?: BatchContext
+): Promise<InvocationRecord[]> {
+  const invocations: InvocationRecord[] = [];
+
+  const request = buildKladosRequest(
+    context,
+    kladosId,
+    outputs,
+    fromLogId,
+    batchContext
+  );
+
+  // Invoke via POST /kladoi/:id/invoke
+  const { data, error } = await client.api.POST('/kladoi/{id}/invoke', {
+    params: { path: { id: kladosId } },
+    body: {
+      target: request.target,
+      job_collection: request.job_collection,
+      input: request.input,
+      // Pass rhiza context for the klados to use
+      rhiza_context: {
+        id: context.id,
+        flow: context.flow,
+        position: kladosId,
+        log_chain: request.rhiza?.log_chain ?? [],
+        parent: context.parent,
+      },
+      batch_context: batchContext,
+      confirm: true,
+    },
+  });
+
+  const result: InvokeResult = error
+    ? { job_id: request.job_id, accepted: false, error: error.message || 'Unknown error' }
+    : { job_id: data!.job_id || request.job_id, accepted: data!.status === 'started' };
+
+  invocations.push({
+    job_id: result.job_id,
+    target_entity: outputs.length === 1 ? outputs[0] : outputs.join(','),
+    batch_index: batchContext?.index,
+    status: result.accepted ? 'pending' : 'error',
+    request,
+  });
+
+  return invocations;
+}
+
+/**
+ * Invoke a sub-rhiza via POST /rhizai/:id/invoke
+ */
+export async function invokeRhiza(
+  client: ArkeClient,
+  context: RhizaContext,
+  rhizaId: string,
+  outputs: string[],
+  fromLogId: string,
+  batchContext?: BatchContext
+): Promise<InvocationRecord[]> {
+  const invocations: InvocationRecord[] = [];
+
+  const jobId = `job_${generateId()}`;
+  const target = outputs.length === 1 ? outputs[0] : outputs[0]; // Primary target
+
+  // Build parent context for callback
+  const parentContext = {
+    job_collection: context.job_collection,
+    rhiza_id: context.id,
+    invoking_log_id: fromLogId,
+    batch_id: batchContext?.id,
+    batch_index: batchContext?.index,
+    on_complete: batchContext ? 'update_batch' as const : 'invoke_next' as const,
+    next_target: batchContext?.gather_target,
+  };
+
+  // Invoke via POST /rhizai/:id/invoke
+  const { data, error } = await client.api.POST('/rhizai/{id}/invoke', {
+    params: { path: { id: rhizaId } },
+    body: {
+      target,
+      // Sub-rhiza gets its own job collection (nested)
+      parent_context: parentContext,
+      confirm: true,
+    },
+  });
+
+  const result: InvokeResult = error
+    ? { job_id: jobId, accepted: false, error: error.message || 'Unknown error' }
+    : { job_id: data!.job_id || jobId, accepted: true };
+
+  // Build a minimal request for logging
+  const request: KladosRequest = {
+    job_id: result.job_id,
+    target,
+    job_collection: context.job_collection, // Parent's collection
+    api_base: context.api_base,
+    expires_at: context.expires_at,
+    network: context.network,
+    rhiza: {
+      id: rhizaId,
+      flow: {}, // Will be loaded by sub-rhiza
+      position: '', // Entry will be determined
+      log_chain: [fromLogId, ...context.log_chain],
+      parent: parentContext,
+    },
+  };
+
+  invocations.push({
+    job_id: result.job_id,
+    target_entity: target,
+    batch_index: batchContext?.index,
+    status: result.accepted ? 'pending' : 'error',
+    request,
+  });
+
+  return invocations;
+}
+
+/**
+ * Build a KladosRequest for invocation
+ */
+export function buildKladosRequest(
+  context: RhizaContext,
+  kladosId: string,
+  outputs: string | string[],
+  fromLogId: string,
+  batchContext?: BatchContext
+): KladosRequest {
+  const jobId = `job_${generateId()}`;
+  const target = Array.isArray(outputs)
+    ? (outputs.length === 1 ? outputs[0] : outputs[0])
+    : outputs;
+
+  return {
+    job_id: jobId,
+    target,
+    job_collection: context.job_collection,
+    api_base: context.api_base,
+    expires_at: context.expires_at,
+    network: context.network,
+    rhiza: {
+      id: context.id,
+      flow: context.flow,
+      position: kladosId,
+      log_chain: [fromLogId, ...context.log_chain],
+      parent: context.parent,
+    },
+    batch: batchContext,
+  };
+}
+```
+
 ### `src/handoff/scatter.ts`
 
 ```typescript
 import type { ArkeClient } from '@arke-institute/sdk';
 import type {
   RhizaContext,
-  TargetRef,
+  FlowStep,
   InvocationRecord,
   BatchProperties,
 } from '../types';
-import { invokeKlados, invokeRhiza, buildKladosRequest } from './invoke';
+import { invokeKlados } from './invoke';
 import { generateId } from '../utils';
 
 export interface ScatterResult {
@@ -354,23 +594,25 @@ export interface ScatterResult {
  * Create a scatter operation (fan-out)
  *
  * 1. Creates batch entity in job collection
- * 2. Invokes target once per output
+ * 2. Invokes target klados once per output
  * 3. Returns batch ID and invocation records
  */
 export async function createScatter(
   client: ArkeClient,
   context: RhizaContext,
-  target: TargetRef,
+  sourceKladosId: string,
+  targetKladosId: string,
   outputs: string[],
   fromLogId: string
 ): Promise<ScatterResult> {
-  const gatherTarget = findGatherTarget(context.definition, context.position, target);
+  // Find the gather target by looking at the target klados's flow step
+  const gatherTarget = findGatherTarget(context.flow, targetKladosId);
 
   // 1. Create batch entity
   const batchProperties: BatchProperties = {
     rhiza_id: context.id,
-    job_id: context.job_id,
-    source_klados: context.position,
+    job_id: context.job_id ?? `job_${generateId()}`,
+    source_klados: sourceKladosId,
     gather_klados: gatherTarget,
     total: outputs.length,
     completed: 0,
@@ -389,7 +631,7 @@ export async function createScatter(
 
   const batchId = batchEntity!.id;
 
-  // 2. Invoke target for each output
+  // 2. Invoke target klados for each output
   const invocations: InvocationRecord[] = [];
 
   // Parallel invocation with concurrency limit
@@ -408,25 +650,16 @@ export async function createScatter(
           gather_target: gatherTarget,
         };
 
-        const request = buildKladosRequest(
+        const invs = await invokeKlados(
+          client,
           context,
-          target,
-          output,
+          targetKladosId,
+          [output],
           fromLogId,
           batchContext
         );
 
-        const result = typeof target === 'string'
-          ? await invokeKlados(client, context, target, request)
-          : await invokeRhiza(client, target.rhiza, request);
-
-        return {
-          job_id: result.job_id,
-          target_entity: output,
-          batch_index: globalIndex,
-          status: 'pending' as const,
-          request,
-        };
+        return invs[0];
       })
     );
 
@@ -439,33 +672,23 @@ export async function createScatter(
 /**
  * Find the gather target for a scatter operation
  *
- * Traces forward from the scatter target to find the klados
- * that has `gather` in its then spec.
+ * Looks at the target klados's flow step to find its gather target.
  */
 export function findGatherTarget(
-  rhiza: Rhiza,
-  sourceKlados: string,
-  scatterTarget: TargetRef
+  flow: Record<string, FlowStep>,
+  scatterTargetId: string
 ): string {
-  if (typeof scatterTarget !== 'string') {
-    // Scattering to a sub-rhiza - gather target is determined by parent
-    // The sub-rhiza's terminal will call back to parent
-    return '';
+  const targetStep = flow[scatterTargetId];
+  if (!targetStep) {
+    throw new Error(`Scatter target '${scatterTargetId}' not found in flow`);
   }
 
-  // Trace forward from scatter target to find gather
-  const targetSpec = rhiza.kladoi[scatterTarget];
-  if (!targetSpec) {
-    throw new Error(`Scatter target '${scatterTarget}' not found in rhiza`);
-  }
-
-  const then = targetSpec.then;
+  const then = targetStep.then;
   if ('gather' in then) {
-    const gatherTarget = then.gather;
-    return typeof gatherTarget === 'string' ? gatherTarget : '';
+    return then.gather;
   }
 
-  throw new Error(`Scatter target '${scatterTarget}' does not have a gather in its then spec`);
+  throw new Error(`Scatter target '${scatterTargetId}' does not have a gather in its then spec`);
 }
 
 /**
@@ -656,7 +879,6 @@ export async function matchRoute(
   rules: RouteRule[]
 ): Promise<RouteRule | null> {
   // For routing, we typically route based on the first output
-  // (or all outputs should match the same rule)
   const primaryOutput = outputs[0];
 
   if (!primaryOutput) {
@@ -719,191 +941,6 @@ function getNestedProperty(
 }
 ```
 
-### `src/handoff/invoke.ts`
-
-```typescript
-import type { ArkeClient } from '@arke-institute/sdk';
-import type {
-  RhizaContext,
-  TargetRef,
-  KladosRequest,
-  BatchContext,
-  InvocationRecord,
-} from '../types';
-import { generateId } from '../utils';
-
-export interface InvokeResult {
-  job_id: string;
-  accepted: boolean;
-  error?: string;
-}
-
-/**
- * Invoke a target (klados or rhiza)
- *
- * Returns invocation records for logging.
- */
-export async function invokeTarget(
-  client: ArkeClient,
-  context: RhizaContext,
-  target: TargetRef,
-  outputs: string[],
-  fromLogId: string,
-  batchContext?: BatchContext
-): Promise<InvocationRecord[]> {
-  const invocations: InvocationRecord[] = [];
-
-  if (typeof target === 'string') {
-    // Local klados - single invocation with all outputs
-    const request = buildKladosRequest(context, target, outputs, fromLogId, batchContext);
-    const result = await invokeKlados(client, context, target, request);
-
-    invocations.push({
-      job_id: result.job_id,
-      target_entity: outputs.length === 1 ? outputs[0] : outputs.join(','),
-      status: result.accepted ? 'pending' : 'error',
-      request,
-    });
-  } else {
-    // Sub-rhiza - invoke the rhiza
-    const request = buildKladosRequest(context, target, outputs, fromLogId, batchContext);
-    const result = await invokeRhiza(client, target.rhiza, request);
-
-    invocations.push({
-      job_id: result.job_id,
-      target_entity: outputs.length === 1 ? outputs[0] : outputs.join(','),
-      status: result.accepted ? 'pending' : 'error',
-      request,
-    });
-  }
-
-  return invocations;
-}
-
-/**
- * Build a KladosRequest for invocation
- */
-export function buildKladosRequest(
-  context: RhizaContext,
-  target: TargetRef,
-  outputs: string | string[],
-  fromLogId: string,
-  batchContext?: BatchContext
-): KladosRequest {
-  const jobId = `job_${generateId()}`;
-  const targetStr = Array.isArray(outputs) ? outputs[0] : outputs;
-
-  // Determine position based on target type
-  const position = typeof target === 'string' ? target : context.definition.entry;
-
-  return {
-    job_id: jobId,
-    target: targetStr,
-    job_collection: context.job_collection,
-    api_base: context.api_base,
-    expires_at: context.expires_at,
-    network: context.network,
-    rhiza: {
-      id: context.id,
-      definition: context.definition,
-      position,
-      log_chain: [fromLogId, ...context.log_chain],
-      // If invoking sub-rhiza, set parent context
-      parent: typeof target !== 'string' ? {
-        job_collection: context.job_collection,
-        rhiza_id: context.id,
-        invoking_log_id: fromLogId,
-        batch_id: batchContext?.id,
-        batch_index: batchContext?.index,
-        on_complete: batchContext ? 'update_batch' : 'invoke_next',
-        next_target: batchContext?.gather_target,
-      } : undefined,
-    },
-    batch: batchContext,
-  };
-}
-
-/**
- * Invoke a klados (agent) via Arke API
- */
-export async function invokeKlados(
-  client: ArkeClient,
-  context: RhizaContext,
-  kladosName: string,
-  request: KladosRequest
-): Promise<InvokeResult> {
-  const spec = context.definition.kladoi[kladosName];
-  if (!spec) {
-    throw new Error(`Klados '${kladosName}' not found in rhiza`);
-  }
-
-  const agentId = spec.action;
-
-  // Invoke via Arke API
-  const { data, error } = await client.api.POST('/agents/{id}/invoke', {
-    params: { path: { id: agentId } },
-    body: {
-      target: request.target,
-      job_collection: request.job_collection,
-      input: {
-        // Pass the full rhiza request as input
-        __rhiza_request: request,
-      },
-      confirm: true,
-    },
-  });
-
-  if (error) {
-    return {
-      job_id: request.job_id,
-      accepted: false,
-      error: error.message || 'Unknown error',
-    };
-  }
-
-  return {
-    job_id: data!.job_id || request.job_id,
-    accepted: data!.status === 'started',
-    error: data!.status === 'rejected' ? data!.error : undefined,
-  };
-}
-
-/**
- * Invoke a sub-rhiza via Arke API
- */
-export async function invokeRhiza(
-  client: ArkeClient,
-  rhizaId: string,
-  request: KladosRequest
-): Promise<InvokeResult> {
-  // Invoke via Arke API (new endpoint)
-  const { data, error } = await client.api.POST('/rhizai/{id}/invoke', {
-    params: { path: { id: rhizaId } },
-    body: {
-      target: request.target,
-      job_collection: request.job_collection,
-      input: request.input,
-      // Pass parent context for callback
-      parent_context: request.rhiza.parent,
-      confirm: true,
-    },
-  });
-
-  if (error) {
-    return {
-      job_id: request.job_id,
-      accepted: false,
-      error: error.message || 'Unknown error',
-    };
-  }
-
-  return {
-    job_id: data!.job_id || request.job_id,
-    accepted: true,
-  };
-}
-```
-
 ### `src/handoff/index.ts`
 
 ```typescript
@@ -918,6 +955,6 @@ export type { GatherResult } from './gather';
 
 export { matchRoute, evaluateWhere } from './route';
 
-export { invokeTarget, invokeKlados, invokeRhiza, buildKladosRequest } from './invoke';
+export { invokeKlados, invokeRhiza, buildKladosRequest } from './invoke';
 export type { InvokeResult } from './invoke';
 ```

@@ -6,259 +6,83 @@
 
 ### Naming
 
-- **Rhiza** (ῥίζα) = Workflow definition, the root structure that branches out
-- **Klados** (κλάδος) = Individual action/branch, an executable unit within a rhiza
+- **Klados** (κλάδος, "branch") = Individual action, a standalone executable unit
+- **Rhiza** (ῥίζα, "root") = Workflow, a composition of kladoi with flow logic
 
 This pairing has biblical attestation (Romans 11:16) and maps cleanly to our concepts:
-- Rhiza = the underlying structure/definition that everything draws from
-- Klados = one executable branch-instance of that structure
+- Klados = a reusable, composable action that can be invoked standalone or as part of workflows
+- Rhiza = the workflow structure that orchestrates kladoi
 
 ### Key Principles
 
-1. **Push-based execution**: Actions invoke next actions directly (no polling orchestrator)
-2. **Log chain as state**: The execution log IS the state machine (no separate state store)
-3. **Perfect resumability**: Every handoff records the exact request for replay
-4. **Runtime-agnostic**: The protocol works with any execution environment
+1. **Composable actions** - Kladoi are first-class entities, reusable across workflows
+2. **Push-based execution** - Actions invoke next actions directly (no polling orchestrator)
+3. **Log chain as state** - The execution log IS the state machine (no separate state store)
+4. **Perfect resumability** - Every handoff records the exact request for replay
+5. **Runtime-agnostic** - The protocol works with any execution environment
 
 ---
 
-## Package Structure
+## Entity Model
 
-```
-/Users/chim/Working/arke_institute/rhiza/
-├── plan/                         # This planning documentation
-│   ├── README.md                 # Overview (this file)
-│   ├── 01-types.md              # Type definitions
-│   ├── 02-validation.md         # Validation rules
-│   ├── 03-handoff.md            # Handoff logic
-│   ├── 04-logging.md            # Logging and chain
-│   ├── 05-resume.md             # Resumability
-│   ├── 06-api-changes.md        # arke_v1 API changes
-│   └── 07-implementation.md     # Implementation phases
-│
-├── src/
-│   ├── types/
-│   │   ├── rhiza.ts             # Rhiza, KladosSpec, ThenSpec
-│   │   ├── request.ts           # KladosRequest
-│   │   ├── response.ts          # KladosResponse
-│   │   ├── log.ts               # KladosLogEntry, HandoffRecord
-│   │   ├── batch.ts             # BatchEntity, BatchSlot
-│   │   ├── status.ts            # StatusResponse
-│   │   └── index.ts
-│   │
-│   ├── validation/
-│   │   ├── validate-rhiza.ts    # validateRhiza()
-│   │   ├── validate-cardinality.ts
-│   │   └── index.ts
-│   │
-│   ├── handoff/
-│   │   ├── interpret.ts         # interpretThen()
-│   │   ├── scatter.ts           # createScatter()
-│   │   ├── gather.ts            # completeBatchSlot()
-│   │   ├── route.ts             # matchRoute()
-│   │   ├── invoke.ts            # invokeKlados()
-│   │   └── index.ts
-│   │
-│   ├── logging/
-│   │   ├── logger.ts            # KladosLogger
-│   │   ├── writer.ts            # writeKladosLog()
-│   │   ├── chain.ts             # Log chain helpers
-│   │   └── index.ts
-│   │
-│   ├── resume/
-│   │   ├── traverse.ts          # traverseLogChain()
-│   │   ├── find-errors.ts       # findErrorLeaves()
-│   │   ├── resume.ts            # resumeWorkflow()
-│   │   └── index.ts
-│   │
-│   ├── status/
-│   │   ├── build.ts             # buildStatusFromLogs()
-│   │   ├── progress.ts          # calculateProgress()
-│   │   └── index.ts
-│   │
-│   ├── client/
-│   │   ├── arke.ts              # ArkeClient wrapper
-│   │   └── index.ts
-│   │
-│   └── index.ts                 # Main exports
-│
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+### Klados (Action)
 
----
-
-## Relationship to Existing Systems
-
-### This Package (rhiza)
-- Runtime-agnostic protocol library
-- Types, validation, handoff logic
-- No Cloudflare-specific code
-- Can be used from Workers, Lambda, Node.js, etc.
-
-### agent-core (existing)
-- Cloudflare Worker/Durable Object framework
-- Will continue to work independently
-- May optionally import rhiza types in future
-
-### arke_v1 API (changes needed)
-- New `/rhizai` routes for workflow CRUD
-- New rhiza entity profile
-- Modified job collection for log chain predicates
-- Resume endpoint
-
----
-
-## Core Concepts
-
-### 1. Workflow Definition (Rhiza)
-
-A rhiza defines a graph of kladoi (actions) with handoff rules:
-
-```yaml
-rhiza:
-  id: pdf-workflow
-  name: PDF Processing Pipeline
-  version: "1.0"
-  entry: pdf-processor
-
-  kladoi:
-    pdf-processor:
-      action: II01abc123...        # Agent ID
-      accepts:
-        types: ["file/pdf"]
-        cardinality: one
-      produces:
-        types: ["file/jpeg"]
-        cardinality: many
-      then:
-        scatter: ocr-service
-
-    ocr-service:
-      action: II01def456...
-      accepts:
-        types: ["file/jpeg"]
-        cardinality: one
-      produces:
-        types: ["text/ocr"]
-        cardinality: one
-      then:
-        gather: text-assembler
-
-    text-assembler:
-      action: II01ghi789...
-      accepts:
-        types: ["text/ocr"]
-        cardinality: many
-      produces:
-        types: ["file/text"]
-        cardinality: one
-      then:
-        done: true
-```
-
-### 2. Handoff Types
-
-| Type | Description | Use Case |
-|------|-------------|----------|
-| `pass` | 1:1 direct handoff | Simple chaining |
-| `scatter` | 1:N fan-out (creates batch) | Parallel processing |
-| `gather` | N:1 fan-in (completes batch) | Aggregation |
-| `route` | Conditional by property | Type-based routing |
-| `done` | Terminal | End of workflow |
-
-### 3. Batch Entity (for scatter/gather)
-
-When a klados scatters, it creates a batch entity:
+A klados is a **standalone, reusable action**. It knows HOW to do something, but not WHAT comes next.
 
 ```typescript
 {
-  id: "IIbatch123...",
-  type: "batch",
+  id: 'II01klados_ocr...',
+  type: 'klados',
   properties: {
-    rhiza_id: "IIrhiza...",
-    job_id: "job_abc123",
-    source_klados: "pdf-processor",
-    gather_klados: "text-assembler",
-    total: 10,
-    completed: 0,
-    status: "pending",
-    slots: [
-      { index: 0, status: "pending" },
-      { index: 1, status: "pending" },
-      // ...
-    ]
+    label: 'OCR Service',
+    description: 'Extracts text from images',
+    endpoint: 'https://ocr.arke.institute',
+    actions_required: ['file:view', 'entity:update'],
+    accepts: { types: ['file/jpeg'], cardinality: 'one' },
+    produces: { types: ['text/ocr'], cardinality: 'one' },
+    status: 'active',
   }
 }
 ```
 
-### 4. Log Chain (for resumability)
+### Rhiza (Workflow)
 
-Each klados writes a log entry with relationships:
+A rhiza **composes kladoi** into a flow. It defines WHAT happens, in WHAT order.
 
-```
-Log A (pdf-processor)
-├── status: done
-├── produced: [page1, page2, page3]
-├── handoffs: scatter → ocr-service
-│   ├── invocation[0]: job_001, status: done
-│   ├── invocation[1]: job_002, status: error  ← RESUME HERE
-│   └── invocation[2]: job_003, status: done
-└── relationships:
-    └── handed_off_to: [Log B, Log C, Log D]
-
-Log B (ocr-service, batch[0])
-├── status: done
-├── received_from: Log A
-└── handed_off_to: [Log E]
-```
-
----
-
-## Execution Flow
-
-### Normal Flow
-
-```
-1. User calls POST /rhizai/{id}/invoke
-2. API validates rhiza, grants permissions to all agents
-3. API creates job collection
-4. API invokes entry klados with KladosRequest (includes RhizaContext)
-5. Entry klados processes, writes log, interprets `then`
-6. Klados invokes next klados(es) based on handoff type
-7. Chain continues until terminal klados
-8. Terminal klados writes final log, workflow complete
-```
-
-### Scatter/Gather Flow
-
-```
-1. Klados A produces N outputs
-2. A creates batch entity with N slots
-3. A invokes klados B N times (parallel), each with batch context
-4. Each B processes its input, updates its batch slot (CAS)
-5. Last B to complete triggers klados C with all outputs
-6. C receives array of all outputs, processes, continues
-```
-
-### Resume Flow
-
-```
-1. User calls POST /rhizai/{id}/jobs/{job_id}/resume
-2. API traverses log chain to find error leaves
-3. For each retryable error:
-   a. Find parent log's invocation record
-   b. Re-invoke with same request (new job_id)
-   c. Update parent's invocation record
-4. Return summary of resumed jobs
+```typescript
+{
+  id: 'II01rhiza_pdf...',
+  type: 'rhiza',
+  properties: {
+    label: 'PDF Processing Pipeline',
+    version: '1.0',
+    entry: 'II01klados_pdf...',
+    flow: {
+      'II01klados_pdf...': { then: { scatter: 'II01klados_ocr...' } },
+      'II01klados_ocr...': { then: { gather: 'II01klados_assembler...' } },
+      'II01klados_assembler...': { then: { done: true } },
+    },
+    status: 'active',
+  }
+}
 ```
 
 ---
 
 ## API Endpoints
 
-### Rhiza CRUD
+### Klados Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /kladoi | Create a klados |
+| GET | /kladoi/:id | Get klados by ID |
+| PUT | /kladoi/:id | Update klados |
+| DELETE | /kladoi/:id | Delete klados |
+| POST | /kladoi/:id/invoke | Invoke klados (standalone) |
+| GET | /kladoi/:id/jobs/:job_id/status | Get job status |
+
+### Rhiza Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -266,48 +90,129 @@ Log B (ocr-service, batch[0])
 | GET | /rhizai/:id | Get rhiza by ID |
 | PUT | /rhizai/:id | Update rhiza |
 | DELETE | /rhizai/:id | Delete rhiza |
-
-### Workflow Execution
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /rhizai/:id/invoke | Start workflow execution |
+| POST | /rhizai/:id/invoke | Invoke rhiza (workflow) |
 | GET | /rhizai/:id/jobs/:job_id/status | Get workflow status |
 | POST | /rhizai/:id/jobs/:job_id/resume | Resume failed workflow |
 
 ---
 
-## Implementation Phases
+## Invocation Flow
 
-### Phase 1: Types & Validation
-- All type definitions
-- Rhiza validation
-- Cardinality consistency checks
+### Standalone Klados Invocation
 
-### Phase 2: Logging
-- KladosLogger (in-memory)
-- writeKladosLog (to job collection)
-- Log chain relationships
+A klados can be invoked directly, without a workflow:
 
-### Phase 3: Handoff Logic
-- interpretThen()
-- scatter/gather with batch entities
-- route matching
+```
+User → POST /kladoi/:id/invoke (no job_collection, no rhiza_context)
+         │
+         ├── API validates klados is active
+         ├── API shows confirmation (grants preview)
+         │
+User → POST /kladoi/:id/invoke (confirm: true)
+         │
+         ├── API grants permissions to klados on target
+         ├── API creates job collection
+         └── API invokes klados endpoint
+                  │
+                  ▼
+         Klados executes
+         No rhiza context → done after processing
+```
 
-### Phase 4: API Integration
-- Rhiza entity profile in arke_v1
-- /rhizai routes
-- Modified job collection
+### Starting a Workflow
 
-### Phase 5: Resume
-- Log chain traversal
-- Error leaf detection
-- Resume execution
+```
+User → POST /rhizai/:id/invoke
+         │
+         ├── API loads rhiza definition
+         ├── API loads all kladoi in flow (runtime validation)
+         ├── API grants permissions to all kladoi
+         ├── API creates job collection
+         └── API calls POST /kladoi/{entry}/invoke
+              │     (with job_collection + rhiza_context)
+              │
+              ▼
+         Entry klados executes...
+```
 
-### Phase 6: Status
-- buildStatusFromLogs()
-- Progress aggregation
-- Status endpoint
+### Klados-to-Klados Handoff
+
+```
+Klados A executes
+         │
+         ├── Process input → produce outputs
+         ├── Write log entry
+         ├── Look up flow[my_id].then
+         └── Call POST /kladoi/{next}/invoke
+              │     (with job_collection + rhiza_context)
+              │
+              ▼
+         Klados B executes...
+```
+
+### Sub-Workflow Invocation
+
+```
+Klados sees: then: { rhiza: 'II01rhiza_sub...' }
+         │
+         └── Call POST /rhizai/{sub}/invoke
+                  │
+                  ├── Creates NEW job collection (nested)
+                  ├── Grants permissions to sub-workflow kladoi
+                  └── Invokes sub-workflow entry klados
+```
+
+### Invocation Mode Summary
+
+| Endpoint | Mode | job_collection | rhiza_context | Who Creates Job Collection |
+|----------|------|----------------|---------------|---------------------------|
+| `/kladoi/:id/invoke` | Standalone | Not provided | Not provided | API |
+| `/kladoi/:id/invoke` | Workflow | Provided | Provided | Rhiza invoke |
+| `/rhizai/:id/invoke` | Workflow | N/A (creates new) | N/A (creates new) | API |
+
+---
+
+## Handoff Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `pass` | 1:1 direct handoff | Simple chaining |
+| `scatter` | 1:N fan-out (creates batch) | Parallel processing |
+| `gather` | N:1 fan-in (completes batch) | Aggregation |
+| `route` | Conditional by property | Type-based routing |
+| `rhiza` | Invoke sub-workflow | Nested workflows |
+| `done` | Terminal | End of workflow |
+
+---
+
+## Package Structure
+
+```
+/Users/chim/Working/arke_institute/rhiza/
+├── plan/                         # Planning documentation
+│   ├── README.md                 # Overview (this file)
+│   ├── 01-types.md              # Type definitions
+│   ├── 02-validation.md         # Validation rules
+│   ├── 03-handoff.md            # Handoff logic
+│   ├── 04-logging.md            # Logging and chain
+│   ├── 05-resume.md             # Resumability
+│   ├── 06-api-changes.md        # arke_v1 API changes
+│   ├── 07-implementation.md     # Implementation phases
+│   └── 08-test-plan.md          # Test plan
+│
+├── src/
+│   ├── types/                   # Type definitions
+│   ├── validation/              # Rhiza validation
+│   ├── handoff/                 # Handoff logic
+│   ├── logging/                 # Log writing and chain
+│   ├── resume/                  # Resumability
+│   ├── status/                  # Status building
+│   └── index.ts
+│
+├── package.json
+├── tsconfig.json
+└── README.md
+```
 
 ---
 
@@ -317,10 +222,6 @@ Log B (ocr-service, batch[0])
 {
   "dependencies": {
     "@arke-institute/sdk": "^2.6.2"
-  },
-  "devDependencies": {
-    "typescript": "^5.7.2",
-    "@types/node": "^22.0.0"
   }
 }
 ```

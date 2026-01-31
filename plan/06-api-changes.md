@@ -2,21 +2,86 @@
 
 ## Overview
 
-The Arke API needs new routes and profiles to support rhiza workflows. This document outlines the required changes to `/Users/chim/Working/arke_institute/arke_v1`.
+The Arke API needs new routes to support klados and rhiza entities. This document outlines the required changes to `/Users/chim/Working/arke_institute/arke_v1`.
+
+**Key change:** Kladoi are now first-class entities, separate from rhizai.
+
+---
+
+## New Entity Types
+
+### Klados Entity
+
+A **klados** is a standalone, reusable action. It knows HOW to do something, but not WHAT comes next.
+
+```typescript
+{
+  id: 'II01klados_ocr...',
+  type: 'klados',
+  properties: {
+    label: 'OCR Service',
+    description: 'Extracts text from images',
+    endpoint: 'https://ocr.arke.institute',
+    actions_required: ['file:view', 'entity:update'],
+    accepts: { types: ['file/jpeg'], cardinality: 'one' },
+    produces: { types: ['text/ocr'], cardinality: 'one' },
+    input_schema: { /* optional JSON Schema */ },
+    status: 'active',
+    endpoint_verified_at: '2025-01-15T00:00:00Z',
+  }
+}
+```
+
+### Rhiza Entity
+
+A **rhiza** composes kladoi into a workflow. It defines WHAT happens, in WHAT order.
+
+```typescript
+{
+  id: 'II01rhiza_pdf...',
+  type: 'rhiza',
+  properties: {
+    label: 'PDF Processing Pipeline',
+    description: 'Processes PDFs through OCR and text assembly',
+    version: '1.0',
+    entry: 'II01klados_pdf...',      // Klados ID (not name)
+    flow: {
+      'II01klados_pdf...': { then: { scatter: 'II01klados_ocr...' } },
+      'II01klados_ocr...': { then: { gather: 'II01klados_assembler...' } },
+      'II01klados_assembler...': { then: { done: true } },
+    },
+    status: 'active',
+  }
+}
+```
 
 ---
 
 ## New Files
+
+### `src/profiles/klados/`
+
+```
+src/profiles/klados/
+├── types.ts        # Klados entity types
+├── operations.ts   # CRUD + invoke operations
+├── validation.ts   # Klados validation
+└── index.ts        # Exports
+```
 
 ### `src/profiles/rhiza/`
 
 ```
 src/profiles/rhiza/
 ├── types.ts        # Rhiza entity types
-├── operations.ts   # CRUD operations
+├── operations.ts   # CRUD + invoke operations
 ├── validation.ts   # Rhiza validation
 └── index.ts        # Exports
 ```
+
+### `src/routes/kladoi.ts`
+
+New route file for klados endpoints.
 
 ### `src/routes/rhizai.ts`
 
@@ -24,289 +89,318 @@ New route file for rhiza endpoints.
 
 ---
 
-## Rhiza Entity Profile
+## Klados Routes
 
-### `src/profiles/rhiza/types.ts`
+### Invocation Modes
 
-```typescript
-import type { Rhiza, KladosSpec, ThenSpec } from '@arke-institute/rhiza';
+The `/kladoi/:id/invoke` endpoint handles two invocation modes:
 
-export const RHIZA_TYPE = 'rhiza';
+| Mode | `job_collection` | `rhiza_context` | Job Collection Created By |
+|------|------------------|-----------------|---------------------------|
+| **Standalone** | Not provided | Not provided | API creates it |
+| **Workflow** | Provided | Provided | Parent rhiza invoke |
 
-/**
- * Rhiza entity properties
- */
-export interface RhizaProperties {
-  /** Human-readable name */
-  label: string;
+**Standalone invocation**: User calls `/kladoi/:id/invoke` directly to run a single action. The API creates a job collection automatically.
 
-  /** Description */
-  description?: string;
+**Workflow invocation**: Called by the rhiza invoke endpoint (for entry klados) or by another klados during handoff. The job collection and rhiza context are passed through.
 
-  /** Semantic version */
-  version: string;
-
-  /** Status */
-  status: 'development' | 'active' | 'disabled';
-
-  /** Entry klados name */
-  entry: string;
-
-  /** Klados definitions */
-  kladoi: Record<string, KladosSpec>;
-
-  /** Created timestamp */
-  created_at: string;
-
-  /** Updated timestamp */
-  updated_at: string;
-}
-
-/**
- * Rhiza manifest (entity format)
- */
-export interface RhizaManifest {
-  id: string;
-  type: typeof RHIZA_TYPE;
-  properties: RhizaProperties;
-  relationships: Array<{
-    predicate: string;
-    peer: string;
-    peer_type?: string;
-    peer_label?: string;
-    properties?: Record<string, unknown>;
-  }>;
-  ver: number;
-  created_at: string;
-  ts: string;
-  edited_by?: {
-    user_id: string;
-    method: string;
-  };
-}
-
-/**
- * Convert entity to Rhiza definition
- */
-export function toRhizaDefinition(manifest: RhizaManifest): Rhiza {
-  return {
-    id: manifest.id,
-    name: manifest.properties.label,
-    version: manifest.properties.version,
-    description: manifest.properties.description,
-    entry: manifest.properties.entry,
-    kladoi: manifest.properties.kladoi,
-  };
-}
-```
-
-### `src/profiles/rhiza/operations.ts`
+### `src/routes/kladoi.ts`
 
 ```typescript
+/**
+ * Klados (Action) Routes
+ *
+ * POST   /kladoi              - Create a klados
+ * GET    /kladoi/:id          - Get klados by ID
+ * PUT    /kladoi/:id          - Update klados
+ * DELETE /kladoi/:id          - Delete klados
+ * POST   /kladoi/:id/invoke   - Invoke a klados (standalone or workflow context)
+ * GET    /kladoi/:id/jobs/:job_id/status - Get job status
+ */
+
+import { OpenAPIHono } from '@hono/zod-openapi';
+import { HTTPException } from 'hono/http-exception';
 import type { IManifestStorage, ITipService } from '@/core/storage/interfaces';
-import type { ExecutionContext, EditInfo } from '@/schema/operations';
-import type { RhizaManifest, RhizaProperties } from './types';
-import { RHIZA_TYPE, toRhizaDefinition } from './types';
-import { validateRhiza } from '@arke-institute/rhiza';
-import { NotFoundError, ValidationError } from '@/errors';
+import {
+  createKlados,
+  getKlados,
+  updateKlados,
+  deleteKlados,
+  KLADOS_TYPE,
+} from '@/profiles/klados';
+import { grantKladosPermissions, invokeKladosEndpoint } from '@/profiles/klados';
+import { createRootJobCollection } from '@/profiles/job_collection';
 import { generateId } from '@/utils/ulid';
+import { requireAuth, getActor } from '@/auth';
+import { requireAction } from '@/permissions';
+import type { ExecutionContext } from '@/schema/operations';
 
-/**
- * Create a new rhiza entity
- */
-export async function createRhiza(
-  storage: IManifestStorage,
-  tip: ITipService,
-  params: {
-    id?: string;
-    label: string;
-    description?: string;
-    version: string;
-    entry: string;
-    kladoi: Record<string, any>;
-    collection: string;
-    edited_by: EditInfo;
-    note?: string;
-  },
-  executionContext: ExecutionContext
-): Promise<{ id: string; cid: string; manifest: RhizaManifest }> {
-  const id = params.id ?? `II${generateId()}`;
-  const now = new Date().toISOString();
+export interface KladoiRoutesConfig {
+  storage: IManifestStorage;
+  tip: ITipService;
+  executionContext: ExecutionContext;
+  signingPrivateKey: string;
+}
 
-  // Validate rhiza definition
-  const rhizaDefinition = {
-    id,
-    name: params.label,
-    version: params.version,
-    entry: params.entry,
-    kladoi: params.kladoi,
-  };
+export function createKladoiRoutes(config: KladoiRoutesConfig): OpenAPIHono {
+  const app = new OpenAPIHono();
+  const { storage, tip, executionContext, signingPrivateKey } = config;
 
-  const validation = validateRhiza(rhizaDefinition);
-  if (!validation.valid) {
-    throw new ValidationError(
-      `Invalid rhiza definition: ${validation.errors.map((e) => e.message).join(', ')}`
+  app.use('*', requireAuth);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // POST / - Create klados
+  // ─────────────────────────────────────────────────────────────────────────
+  app.post('/', async (c) => {
+    const actor = getActor(c);
+    const body = await c.req.json();
+
+    // Permission check on collection
+    await requireAction(
+      { storage, tip },
+      actor.pi,
+      { id: body.collection, type: 'collection' },
+      'klados:create'
     );
-  }
 
-  const properties: RhizaProperties = {
-    label: params.label,
-    description: params.description,
-    version: params.version,
-    status: 'development',
-    entry: params.entry,
-    kladoi: params.kladoi,
-    created_at: now,
-    updated_at: now,
-  };
+    const result = await createKlados(storage, tip, {
+      id: body.id,
+      label: body.label,
+      description: body.description,
+      endpoint: body.endpoint,
+      actions_required: body.actions_required,
+      accepts: body.accepts,
+      produces: body.produces,
+      input_schema: body.input_schema,
+      collection: body.collection,
+      edited_by: { user_id: actor.pi, method: 'manual' },
+      note: body.note,
+    }, executionContext);
 
-  const manifest: RhizaManifest = {
-    id,
-    type: RHIZA_TYPE,
-    properties,
-    relationships: [],
-    ver: 1,
-    created_at: now,
-    ts: now,
-    edited_by: params.edited_by,
-  };
+    return c.json(result, 201);
+  });
 
-  // Store manifest
-  const cid = await storage.writeManifest(manifest);
-  await tip.writeTip(id, cid);
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /:id - Get klados
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get('/:id', async (c) => {
+    const id = c.req.param('id');
+    const actor = getActor(c);
 
-  // Add to collection
-  // ... (similar to agent creation)
+    await requireAction({ storage, tip }, actor.pi, { id, type: KLADOS_TYPE }, 'klados:view');
 
-  return { id, cid, manifest };
-}
+    const { cid, manifest } = await getKlados(storage, tip, id);
 
-/**
- * Get a rhiza by ID
- */
-export async function getRhiza(
-  storage: IManifestStorage,
-  tip: ITipService,
-  id: string
-): Promise<{ cid: string; manifest: RhizaManifest }> {
-  const cid = await tip.readTipOrNull(id);
-  if (!cid) {
-    throw new NotFoundError(`Rhiza ${id} not found`);
-  }
+    return c.json({
+      id: manifest.id,
+      cid,
+      type: manifest.type,
+      properties: manifest.properties,
+      relationships: manifest.relationships,
+      ver: manifest.ver,
+      created_at: manifest.created_at,
+      ts: manifest.ts,
+    });
+  });
 
-  const manifest = (await storage.readManifest(cid)) as RhizaManifest;
-  if (manifest.type !== RHIZA_TYPE) {
-    throw new ValidationError(`Entity ${id} is not a rhiza`);
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  // PUT /:id - Update klados
+  // ─────────────────────────────────────────────────────────────────────────
+  app.put('/:id', async (c) => {
+    const id = c.req.param('id');
+    const actor = getActor(c);
+    const body = await c.req.json();
 
-  return { cid, manifest };
-}
+    await requireAction({ storage, tip }, actor.pi, { id, type: KLADOS_TYPE }, 'klados:update');
 
-/**
- * Update a rhiza
- */
-export async function updateRhiza(
-  storage: IManifestStorage,
-  tip: ITipService,
-  id: string,
-  params: {
-    expect_tip: string;
-    label?: string;
-    description?: string;
-    version?: string;
-    status?: 'development' | 'active' | 'disabled';
-    entry?: string;
-    kladoi?: Record<string, any>;
-    edited_by: EditInfo;
-    note?: string;
-  },
-  executionContext: ExecutionContext
-): Promise<{ id: string; cid: string; manifest: RhizaManifest; prev_cid: string }> {
-  const { cid: currentCid, manifest: current } = await getRhiza(storage, tip, id);
+    const result = await updateKlados(storage, tip, id, {
+      expect_tip: body.expect_tip,
+      label: body.label,
+      description: body.description,
+      endpoint: body.endpoint,
+      actions_required: body.actions_required,
+      accepts: body.accepts,
+      produces: body.produces,
+      input_schema: body.input_schema,
+      status: body.status,
+      edited_by: { user_id: actor.pi, method: 'manual' },
+      note: body.note,
+    }, executionContext);
 
-  // CAS check
-  if (currentCid !== params.expect_tip) {
-    throw new ValidationError('Conflict: entity has been modified');
-  }
+    return c.json(result);
+  });
 
-  const now = new Date().toISOString();
+  // ─────────────────────────────────────────────────────────────────────────
+  // DELETE /:id - Delete klados
+  // ─────────────────────────────────────────────────────────────────────────
+  app.delete('/:id', async (c) => {
+    const id = c.req.param('id');
+    const actor = getActor(c);
 
-  // Build updated properties
-  const properties: RhizaProperties = {
-    ...current.properties,
-    ...(params.label !== undefined && { label: params.label }),
-    ...(params.description !== undefined && { description: params.description }),
-    ...(params.version !== undefined && { version: params.version }),
-    ...(params.status !== undefined && { status: params.status }),
-    ...(params.entry !== undefined && { entry: params.entry }),
-    ...(params.kladoi !== undefined && { kladoi: params.kladoi }),
-    updated_at: now,
-  };
+    await requireAction({ storage, tip }, actor.pi, { id, type: KLADOS_TYPE }, 'klados:delete');
 
-  // If kladoi or entry changed, re-validate
-  if (params.kladoi !== undefined || params.entry !== undefined) {
-    const rhizaDefinition = {
-      id,
-      name: properties.label,
-      version: properties.version,
-      entry: properties.entry,
-      kladoi: properties.kladoi,
+    await deleteKlados(storage, tip, id, {
+      edited_by: { user_id: actor.pi, method: 'manual' },
+    }, executionContext);
+
+    return c.json({ deleted: true });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // POST /:id/invoke - Invoke klados
+  //
+  // Two modes:
+  // 1. STANDALONE: User invokes klados directly (no job_collection, no rhiza_context)
+  //    - API creates job collection
+  //    - API grants permissions
+  //    - Two-phase confirmation flow
+  //
+  // 2. WORKFLOW: Called by rhiza invoke or klados handoff (job_collection + rhiza_context provided)
+  //    - Job collection already exists
+  //    - Permissions already granted by rhiza invoke
+  //    - No confirmation needed (already confirmed at rhiza level)
+  // ─────────────────────────────────────────────────────────────────────────
+  app.post('/:id/invoke', async (c) => {
+    const id = c.req.param('id');
+    const actor = getActor(c);
+    const body = await c.req.json();
+
+    // Get klados
+    const { manifest: kladosManifest } = await getKlados(storage, tip, id);
+
+    if (kladosManifest.properties.status !== 'active') {
+      throw new HTTPException(400, {
+        message: `Klados is not active (status: ${kladosManifest.properties.status})`,
+      });
+    }
+
+    // Determine invocation mode
+    const isWorkflowContext = !!body.job_collection && !!body.rhiza_context;
+
+    // For standalone invocations, require klados:invoke permission
+    // For workflow context, permissions were already checked at rhiza invoke
+    if (!isWorkflowContext) {
+      await requireAction({ storage, tip }, actor.pi, { id, type: KLADOS_TYPE }, 'klados:invoke');
+    }
+
+    const expiresIn = body.expires_in ?? 3600;
+    const expiresAt = body.expires_at ?? new Date(Date.now() + expiresIn * 1000).toISOString();
+
+    // Two-phase confirmation (standalone only)
+    if (!isWorkflowContext && !body.confirm) {
+      return c.json({
+        status: 'pending_confirmation',
+        message: `Klados "${kladosManifest.properties.label}" will be granted access to target`,
+        grants: [{
+          klados: { id, label: kladosManifest.properties.label },
+          actions: kladosManifest.properties.actions_required,
+        }],
+        expires_at: expiresAt,
+      });
+    }
+
+    // For standalone: grant permissions and create job collection
+    let jobCollection = body.job_collection;
+    const jobId = body.job_id ?? `job_${generateId()}`;
+
+    if (!isWorkflowContext) {
+      // Standalone: check permission on target and grant to klados
+      await requireAction(
+        { storage, tip },
+        actor.pi,
+        { id: body.target, type: 'entity' },
+        'entity:manage'
+      );
+
+      await grantKladosPermissions(
+        storage,
+        tip,
+        body.target,
+        id,
+        kladosManifest.properties.actions_required,
+        expiresAt,
+        { user_id: actor.pi, method: 'system' },
+        executionContext
+      );
+
+      // Standalone: create job collection
+      const jc = await createRootJobCollection(storage, tip, {
+        jobId,
+        invokingUserId: actor.pi,
+        mainKladosId: id,
+        targetId: body.target,
+        editInfo: { user_id: actor.pi, method: 'system' },
+      }, executionContext);
+      jobCollection = jc.id;
+    }
+
+    // Build request
+    const requestUrl = new URL(c.req.url);
+    const arkeApiBase = body.api_base ?? `${requestUrl.protocol}//${requestUrl.host}`;
+    const network = body.network ?? (c.req.header('X-Arke-Network') === 'test' ? 'test' : 'main');
+
+    const kladosRequest = {
+      job_id: jobId,
+      target: body.target,
+      job_collection: jobCollection,
+      input: body.input,
+      api_base: arkeApiBase,
+      expires_at: expiresAt,
+      network,
+      // Workflow context (only present when invoked as part of rhiza)
+      rhiza: body.rhiza_context,
+      // Batch context (only present when part of scatter)
+      batch: body.batch_context,
     };
 
-    const validation = validateRhiza(rhizaDefinition);
-    if (!validation.valid) {
-      throw new ValidationError(
-        `Invalid rhiza definition: ${validation.errors.map((e) => e.message).join(', ')}`
-      );
+    // Invoke klados endpoint
+    const kladosResponse = await invokeKladosEndpoint(
+      kladosManifest,
+      kladosRequest,
+      signingPrivateKey
+    );
+
+    if (!kladosResponse.accepted) {
+      return c.json({
+        status: 'rejected',
+        error: kladosResponse.error ?? 'Klados rejected the job',
+        job_id: jobId,
+      }, 202);
     }
-  }
 
-  // Can only activate if definition is valid
-  if (params.status === 'active') {
-    const rhizaDefinition = toRhizaDefinition({ ...current, properties });
-    const validation = validateRhiza(rhizaDefinition);
-    if (!validation.valid) {
-      throw new ValidationError(
-        `Cannot activate rhiza with validation errors: ${validation.errors.map((e) => e.message).join(', ')}`
-      );
-    }
-  }
+    return c.json({
+      status: 'started',
+      job_id: jobId,
+      job_collection: jobCollection,
+      klados_id: id,
+      expires_at: expiresAt,
+    }, 202);
+  });
 
-  const manifest: RhizaManifest = {
-    ...current,
-    properties,
-    ver: current.ver + 1,
-    ts: now,
-    edited_by: params.edited_by,
-  };
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /:id/jobs/:job_id/status - Get job status
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get('/:id/jobs/:job_id/status', async (c) => {
+    const kladosId = c.req.param('id');
+    const jobId = c.req.param('job_id');
 
-  const cid = await storage.writeManifest(manifest);
-  await tip.writeTip(id, cid);
+    // Find job collection and return status
+    // ... implementation
 
-  return { id, cid, manifest, prev_cid: currentCid };
-}
+    return c.json({
+      job_id: jobId,
+      klados_id: kladosId,
+      status: 'running',
+    });
+  });
 
-/**
- * Gather all agent IDs referenced in a rhiza
- */
-export function gatherWorkflowAgents(
-  kladoi: Record<string, any>
-): string[] {
-  const agents = new Set<string>();
-
-  for (const spec of Object.values(kladoi)) {
-    if (spec.action) {
-      agents.add(spec.action);
-    }
-  }
-
-  return Array.from(agents);
+  return app;
 }
 ```
 
 ---
 
-## New Routes
+## Rhiza Routes
 
 ### `src/routes/rhizai.ts`
 
@@ -317,7 +411,8 @@ export function gatherWorkflowAgents(
  * POST   /rhizai              - Create a rhiza
  * GET    /rhizai/:id          - Get rhiza by ID
  * PUT    /rhizai/:id          - Update rhiza
- * POST   /rhizai/:id/invoke   - Invoke a rhiza
+ * DELETE /rhizai/:id          - Delete rhiza
+ * POST   /rhizai/:id/invoke   - Invoke a rhiza (workflow)
  * GET    /rhizai/:id/jobs/:job_id/status - Get workflow status
  * POST   /rhizai/:id/jobs/:job_id/resume - Resume failed workflow
  */
@@ -329,16 +424,15 @@ import {
   createRhiza,
   getRhiza,
   updateRhiza,
-  gatherWorkflowAgents,
-  toRhizaDefinition,
+  deleteRhiza,
   RHIZA_TYPE,
 } from '@/profiles/rhiza';
-import { getAgent, grantAgentPermissions, invokeAgentEndpoint } from '@/profiles/agent';
+import { getKlados, grantKladosPermissions, invokeKladosEndpoint } from '@/profiles/klados';
 import { createRootJobCollection } from '@/profiles/job_collection';
+import { validateRhizaRuntime } from '@arke-institute/rhiza';
 import { generateId } from '@/utils/ulid';
 import { requireAuth, getActor } from '@/auth';
 import { requireAction } from '@/permissions';
-import { NotFoundError, ValidationError } from '@/errors';
 import type { ExecutionContext } from '@/schema/operations';
 
 export interface RhizaiRoutesConfig {
@@ -352,7 +446,6 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
   const app = new OpenAPIHono();
   const { storage, tip, executionContext, signingPrivateKey } = config;
 
-  // Require auth for all routes
   app.use('*', requireAuth);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -362,7 +455,6 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
     const actor = getActor(c);
     const body = await c.req.json();
 
-    // Permission check on collection
     await requireAction(
       { storage, tip },
       actor.pi,
@@ -376,7 +468,7 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
       description: body.description,
       version: body.version,
       entry: body.entry,
-      kladoi: body.kladoi,
+      flow: body.flow,
       collection: body.collection,
       edited_by: { user_id: actor.pi, method: 'manual' },
       note: body.note,
@@ -425,12 +517,28 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
       version: body.version,
       status: body.status,
       entry: body.entry,
-      kladoi: body.kladoi,
+      flow: body.flow,
       edited_by: { user_id: actor.pi, method: 'manual' },
       note: body.note,
     }, executionContext);
 
     return c.json(result);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DELETE /:id - Delete rhiza
+  // ─────────────────────────────────────────────────────────────────────────
+  app.delete('/:id', async (c) => {
+    const id = c.req.param('id');
+    const actor = getActor(c);
+
+    await requireAction({ storage, tip }, actor.pi, { id, type: RHIZA_TYPE }, 'rhiza:delete');
+
+    await deleteRhiza(storage, tip, id, {
+      edited_by: { user_id: actor.pi, method: 'manual' },
+    }, executionContext);
+
+    return c.json({ deleted: true });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -453,41 +561,52 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
     // Permission check
     await requireAction({ storage, tip }, actor.pi, { id, type: RHIZA_TYPE }, 'rhiza:invoke');
 
-    // Convert to definition
-    const rhizaDefinition = toRhizaDefinition(rhizaManifest);
+    // Runtime validation - load all kladoi and check compatibility
+    const runtimeValidation = await validateRhizaRuntime(
+      // Pass a client-like interface for loading kladoi
+      {
+        api: {
+          GET: async (path: string, options: any) => {
+            if (path.includes('/kladoi/')) {
+              const kladosId = options.params.path.id;
+              const { manifest } = await getKlados(storage, tip, kladosId);
+              return { data: manifest };
+            }
+            throw new Error(`Unexpected path: ${path}`);
+          },
+        },
+      } as any,
+      rhizaManifest.properties
+    );
 
-    // Get entry klados spec
-    const entrySpec = rhizaDefinition.kladoi[rhizaDefinition.entry];
-    if (!entrySpec) {
-      throw new HTTPException(500, { message: 'Entry klados not found in rhiza' });
+    if (!runtimeValidation.valid) {
+      throw new HTTPException(400, {
+        message: `Rhiza validation failed: ${runtimeValidation.errors.map(e => e.message).join(', ')}`,
+      });
     }
 
-    // Get entry agent
-    const { manifest: agentManifest } = await getAgent(storage, tip, entrySpec.action);
+    // Get all klados IDs from flow
+    const allKladosIds = Object.keys(rhizaManifest.properties.flow);
 
-    // Gather all agents in workflow
-    const allAgentIds = gatherWorkflowAgents(rhizaDefinition.kladoi);
-
-    // Build grant info for all agents
+    // Build grant info
     const expiresIn = body.expires_in ?? 3600;
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
     // Two-phase: preview vs confirmed
     if (!body.confirm) {
-      // Preview mode - return grants that will be made
       const grants = await Promise.all(
-        allAgentIds.map(async (agentId) => {
-          const { manifest } = await getAgent(storage, tip, agentId);
+        allKladosIds.map(async (kladosId) => {
+          const klados = runtimeValidation.kladoi.get(kladosId)!;
           return {
-            agent: { id: agentId, label: manifest.properties.label },
-            actions: manifest.properties.actions_required,
+            klados: { id: kladosId, label: klados.properties.label },
+            actions: klados.properties.actions_required,
           };
         })
       );
 
       return c.json({
         status: 'pending_confirmation',
-        message: `Workflow "${rhizaManifest.properties.label}" will be granted access to target collection`,
+        message: `Workflow "${rhizaManifest.properties.label}" will be granted access to target`,
         grants,
         expires_at: expiresAt,
       });
@@ -495,50 +614,49 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
 
     // Confirmed - grant permissions and invoke
 
-    // Check collection:manage permission
+    // Check permission on target
     await requireAction(
       { storage, tip },
       actor.pi,
-      { id: body.target, type: 'collection' },
-      'collection:manage'
+      { id: body.target, type: 'entity' },
+      'entity:manage'
     );
 
-    // Grant permissions to all agents
-    const grantInfo = await Promise.all(
-      allAgentIds.map(async (agentId) => {
-        const { manifest } = await getAgent(storage, tip, agentId);
-        return {
-          agentId,
-          actions: manifest.properties.actions_required,
-          expiresAt,
-        };
-      })
-    );
-
-    await grantAgentPermissions(
-      storage,
-      tip,
-      body.target,
-      grantInfo,
-      { user_id: actor.pi, method: 'system' },
-      executionContext
-    );
+    // Grant permissions to all kladoi
+    for (const kladosId of allKladosIds) {
+      const klados = runtimeValidation.kladoi.get(kladosId)!;
+      await grantKladosPermissions(
+        storage,
+        tip,
+        body.target,
+        kladosId,
+        klados.properties.actions_required,
+        expiresAt,
+        { user_id: actor.pi, method: 'system' },
+        executionContext
+      );
+    }
 
     // Create job collection
     const jobId = `job_${generateId()}`;
+    const entryKladosId = rhizaManifest.properties.entry;
+
     const jobCollection = await createRootJobCollection(storage, tip, {
       jobId,
       invokingUserId: actor.pi,
-      mainAgentId: entrySpec.action,
-      targetCollectionId: body.target,
-      rhizaId: id,  // NEW: link to rhiza
+      mainKladosId: entryKladosId,
+      targetId: body.target,
+      rhizaId: id,
       editInfo: { user_id: actor.pi, method: 'system' },
     }, executionContext);
 
-    // Build KladosRequest with RhizaContext
+    // Build request
     const requestUrl = new URL(c.req.url);
     const arkeApiBase = `${requestUrl.protocol}//${requestUrl.host}`;
     const network = c.req.header('X-Arke-Network') === 'test' ? 'test' : 'main';
+
+    // Build flow for passing to klados
+    const flow = rhizaManifest.properties.flow;
 
     const kladosRequest = {
       job_id: jobId,
@@ -548,38 +666,31 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
       api_base: arkeApiBase,
       expires_at: expiresAt,
       network,
-      // NEW: Rhiza context
+      // Rhiza context
       rhiza: {
         id,
-        definition: rhizaDefinition,
-        position: rhizaDefinition.entry,
+        flow,
+        position: entryKladosId,
         log_chain: [],
+        parent: body.parent_context, // If invoked as sub-workflow
       },
     };
 
-    // Invoke entry agent with extended request
-    const agentResponse = await invokeAgentEndpoint(
-      agentManifest,
-      {
-        job_id: jobId,
-        target: body.target,
-        job_collection: jobCollection.id,
-        input: {
-          // Pass rhiza request as input for agent to extract
-          __rhiza_request: kladosRequest,
-          ...(body.input ?? {}),
-        },
-        api_base: arkeApiBase,
-        expires_at: expiresAt,
-        network,
-      },
+    // Get entry klados manifest
+    const entryKlados = runtimeValidation.kladoi.get(entryKladosId)!;
+
+    // Invoke entry klados
+    const kladosResponse = await invokeKladosEndpoint(
+      entryKlados,
+      kladosRequest,
       signingPrivateKey
     );
 
-    if (!agentResponse.accepted) {
+    if (!kladosResponse.accepted) {
       return c.json({
         status: 'rejected',
-        error: agentResponse.error ?? 'Entry agent rejected the job',
+        error: kladosResponse.error ?? 'Entry klados rejected the job',
+        job_id: jobId,
       }, 202);
     }
 
@@ -599,18 +710,14 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
     const rhizaId = c.req.param('id');
     const jobId = c.req.param('job_id');
 
-    // Find job collection by job_id
-    // ... implementation to query job collection and build status from log chain
-
-    // Use rhiza package to build status
+    // Use rhiza package to build status from logs
     // const status = await buildStatusFromLogs(client, jobCollectionId);
 
     return c.json({
       job_id: jobId,
       rhiza_id: rhizaId,
-      status: 'running',  // Computed from log chain
+      status: 'running',
       progress: { total: 0, pending: 0, running: 0, done: 0, error: 0 },
-      // ... more fields
     });
   });
 
@@ -622,7 +729,6 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
     const jobId = c.req.param('job_id');
     const body = await c.req.json();
 
-    // Find job collection
     // Use rhiza package to resume
     // const result = await resumeWorkflow(client, jobCollectionId, body);
 
@@ -639,47 +745,571 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
 
 ---
 
+## Klados Profile
+
+### `src/profiles/klados/types.ts`
+
+```typescript
+import type { ContractSpec } from '@arke-institute/rhiza';
+
+export const KLADOS_TYPE = 'klados';
+
+export interface KladosProperties {
+  label: string;
+  description?: string;
+  endpoint: string;
+  actions_required: string[];
+  accepts: ContractSpec;
+  produces: ContractSpec;
+  input_schema?: Record<string, unknown>;
+  status: 'development' | 'active' | 'disabled';
+  endpoint_verified_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KladosManifest {
+  id: string;
+  type: typeof KLADOS_TYPE;
+  properties: KladosProperties;
+  relationships: Array<{
+    predicate: string;
+    peer: string;
+    peer_type?: string;
+    peer_label?: string;
+    properties?: Record<string, unknown>;
+  }>;
+  ver: number;
+  created_at: string;
+  ts: string;
+  edited_by?: {
+    user_id: string;
+    method: string;
+  };
+}
+```
+
+### `src/profiles/klados/operations.ts`
+
+```typescript
+import type { IManifestStorage, ITipService } from '@/core/storage/interfaces';
+import type { ExecutionContext, EditInfo } from '@/schema/operations';
+import type { KladosManifest, KladosProperties } from './types';
+import { KLADOS_TYPE } from './types';
+import { validateKladosProperties } from '@arke-institute/rhiza';
+import { NotFoundError, ValidationError } from '@/errors';
+import { generateId } from '@/utils/ulid';
+import { signRequest } from '@/utils/signing';
+
+export async function createKlados(
+  storage: IManifestStorage,
+  tip: ITipService,
+  params: {
+    id?: string;
+    label: string;
+    description?: string;
+    endpoint: string;
+    actions_required: string[];
+    accepts: { types: string[]; cardinality: 'one' | 'many' };
+    produces: { types: string[]; cardinality: 'one' | 'many' };
+    input_schema?: Record<string, unknown>;
+    collection: string;
+    edited_by: EditInfo;
+    note?: string;
+  },
+  executionContext: ExecutionContext
+): Promise<{ id: string; cid: string; manifest: KladosManifest }> {
+  const id = params.id ?? `II${generateId()}`;
+  const now = new Date().toISOString();
+
+  // Validate
+  const validation = validateKladosProperties({
+    label: params.label,
+    endpoint: params.endpoint,
+    actions_required: params.actions_required,
+    accepts: params.accepts,
+    produces: params.produces,
+  });
+
+  if (!validation.valid) {
+    throw new ValidationError(
+      `Invalid klados: ${validation.errors.map(e => e.message).join(', ')}`
+    );
+  }
+
+  const properties: KladosProperties = {
+    label: params.label,
+    description: params.description,
+    endpoint: params.endpoint,
+    actions_required: params.actions_required,
+    accepts: params.accepts,
+    produces: params.produces,
+    input_schema: params.input_schema,
+    status: 'development',
+    created_at: now,
+    updated_at: now,
+  };
+
+  const manifest: KladosManifest = {
+    id,
+    type: KLADOS_TYPE,
+    properties,
+    relationships: [],
+    ver: 1,
+    created_at: now,
+    ts: now,
+    edited_by: params.edited_by,
+  };
+
+  const cid = await storage.writeManifest(manifest);
+  await tip.writeTip(id, cid);
+
+  // Add to collection...
+
+  return { id, cid, manifest };
+}
+
+export async function getKlados(
+  storage: IManifestStorage,
+  tip: ITipService,
+  id: string
+): Promise<{ cid: string; manifest: KladosManifest }> {
+  const cid = await tip.readTipOrNull(id);
+  if (!cid) {
+    throw new NotFoundError(`Klados ${id} not found`);
+  }
+
+  const manifest = (await storage.readManifest(cid)) as KladosManifest;
+  if (manifest.type !== KLADOS_TYPE) {
+    throw new ValidationError(`Entity ${id} is not a klados`);
+  }
+
+  return { cid, manifest };
+}
+
+export async function updateKlados(
+  storage: IManifestStorage,
+  tip: ITipService,
+  id: string,
+  params: {
+    expect_tip: string;
+    label?: string;
+    description?: string;
+    endpoint?: string;
+    actions_required?: string[];
+    accepts?: { types: string[]; cardinality: 'one' | 'many' };
+    produces?: { types: string[]; cardinality: 'one' | 'many' };
+    input_schema?: Record<string, unknown>;
+    status?: 'development' | 'active' | 'disabled';
+    edited_by: EditInfo;
+    note?: string;
+  },
+  executionContext: ExecutionContext
+): Promise<{ id: string; cid: string; manifest: KladosManifest; prev_cid: string }> {
+  const { cid: currentCid, manifest: current } = await getKlados(storage, tip, id);
+
+  if (currentCid !== params.expect_tip) {
+    throw new ValidationError('Conflict: entity has been modified');
+  }
+
+  const now = new Date().toISOString();
+
+  const properties: KladosProperties = {
+    ...current.properties,
+    ...(params.label !== undefined && { label: params.label }),
+    ...(params.description !== undefined && { description: params.description }),
+    ...(params.endpoint !== undefined && { endpoint: params.endpoint }),
+    ...(params.actions_required !== undefined && { actions_required: params.actions_required }),
+    ...(params.accepts !== undefined && { accepts: params.accepts }),
+    ...(params.produces !== undefined && { produces: params.produces }),
+    ...(params.input_schema !== undefined && { input_schema: params.input_schema }),
+    ...(params.status !== undefined && { status: params.status }),
+    updated_at: now,
+  };
+
+  // Re-validate if critical fields changed
+  if (
+    params.endpoint !== undefined ||
+    params.accepts !== undefined ||
+    params.produces !== undefined ||
+    params.actions_required !== undefined
+  ) {
+    const validation = validateKladosProperties(properties);
+    if (!validation.valid) {
+      throw new ValidationError(
+        `Invalid klados: ${validation.errors.map(e => e.message).join(', ')}`
+      );
+    }
+  }
+
+  const manifest: KladosManifest = {
+    ...current,
+    properties,
+    ver: current.ver + 1,
+    ts: now,
+    edited_by: params.edited_by,
+  };
+
+  const cid = await storage.writeManifest(manifest);
+  await tip.writeTip(id, cid);
+
+  return { id, cid, manifest, prev_cid: currentCid };
+}
+
+export async function deleteKlados(
+  storage: IManifestStorage,
+  tip: ITipService,
+  id: string,
+  params: { edited_by: EditInfo },
+  executionContext: ExecutionContext
+): Promise<void> {
+  // Soft delete by setting status to disabled
+  const { cid } = await getKlados(storage, tip, id);
+  await updateKlados(storage, tip, id, {
+    expect_tip: cid,
+    status: 'disabled',
+    edited_by: params.edited_by,
+  }, executionContext);
+}
+
+export async function grantKladosPermissions(
+  storage: IManifestStorage,
+  tip: ITipService,
+  targetId: string,
+  kladosId: string,
+  actions: string[],
+  expiresAt: string,
+  editInfo: EditInfo,
+  executionContext: ExecutionContext
+): Promise<void> {
+  // Grant permissions to klados on target
+  // Implementation depends on Arke permission system
+}
+
+export async function invokeKladosEndpoint(
+  kladosManifest: KladosManifest,
+  request: Record<string, unknown>,
+  signingPrivateKey: string
+): Promise<{ accepted: boolean; job_id?: string; error?: string }> {
+  const endpoint = kladosManifest.properties.endpoint;
+
+  // Sign the request
+  const signature = signRequest(request, signingPrivateKey);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Arke-Signature': signature,
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      return { accepted: false, error };
+    }
+
+    const data = await response.json();
+    return {
+      accepted: data.accepted ?? true,
+      job_id: data.job_id,
+      error: data.error,
+    };
+  } catch (e) {
+    return {
+      accepted: false,
+      error: e instanceof Error ? e.message : 'Unknown error',
+    };
+  }
+}
+```
+
+---
+
+## Rhiza Profile
+
+### `src/profiles/rhiza/types.ts`
+
+```typescript
+import type { FlowStep } from '@arke-institute/rhiza';
+
+export const RHIZA_TYPE = 'rhiza';
+
+export interface RhizaProperties {
+  label: string;
+  description?: string;
+  version: string;
+  entry: string; // Klados ID
+  flow: Record<string, FlowStep>; // Klados ID → handoff
+  status: 'development' | 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RhizaManifest {
+  id: string;
+  type: typeof RHIZA_TYPE;
+  properties: RhizaProperties;
+  relationships: Array<{
+    predicate: string;
+    peer: string;
+    peer_type?: string;
+    peer_label?: string;
+    properties?: Record<string, unknown>;
+  }>;
+  ver: number;
+  created_at: string;
+  ts: string;
+  edited_by?: {
+    user_id: string;
+    method: string;
+  };
+}
+```
+
+### `src/profiles/rhiza/operations.ts`
+
+```typescript
+import type { IManifestStorage, ITipService } from '@/core/storage/interfaces';
+import type { ExecutionContext, EditInfo } from '@/schema/operations';
+import type { RhizaManifest, RhizaProperties } from './types';
+import { RHIZA_TYPE } from './types';
+import { validateRhizaProperties } from '@arke-institute/rhiza';
+import { NotFoundError, ValidationError } from '@/errors';
+import { generateId } from '@/utils/ulid';
+
+export async function createRhiza(
+  storage: IManifestStorage,
+  tip: ITipService,
+  params: {
+    id?: string;
+    label: string;
+    description?: string;
+    version: string;
+    entry: string;
+    flow: Record<string, { then: unknown }>;
+    collection: string;
+    edited_by: EditInfo;
+    note?: string;
+  },
+  executionContext: ExecutionContext
+): Promise<{ id: string; cid: string; manifest: RhizaManifest }> {
+  const id = params.id ?? `II${generateId()}`;
+  const now = new Date().toISOString();
+
+  // Validate
+  const validation = validateRhizaProperties({
+    label: params.label,
+    version: params.version,
+    entry: params.entry,
+    flow: params.flow as any,
+  });
+
+  if (!validation.valid) {
+    throw new ValidationError(
+      `Invalid rhiza: ${validation.errors.map(e => e.message).join(', ')}`
+    );
+  }
+
+  const properties: RhizaProperties = {
+    label: params.label,
+    description: params.description,
+    version: params.version,
+    entry: params.entry,
+    flow: params.flow as any,
+    status: 'development',
+    created_at: now,
+    updated_at: now,
+  };
+
+  const manifest: RhizaManifest = {
+    id,
+    type: RHIZA_TYPE,
+    properties,
+    relationships: [],
+    ver: 1,
+    created_at: now,
+    ts: now,
+    edited_by: params.edited_by,
+  };
+
+  const cid = await storage.writeManifest(manifest);
+  await tip.writeTip(id, cid);
+
+  return { id, cid, manifest };
+}
+
+export async function getRhiza(
+  storage: IManifestStorage,
+  tip: ITipService,
+  id: string
+): Promise<{ cid: string; manifest: RhizaManifest }> {
+  const cid = await tip.readTipOrNull(id);
+  if (!cid) {
+    throw new NotFoundError(`Rhiza ${id} not found`);
+  }
+
+  const manifest = (await storage.readManifest(cid)) as RhizaManifest;
+  if (manifest.type !== RHIZA_TYPE) {
+    throw new ValidationError(`Entity ${id} is not a rhiza`);
+  }
+
+  return { cid, manifest };
+}
+
+export async function updateRhiza(
+  storage: IManifestStorage,
+  tip: ITipService,
+  id: string,
+  params: {
+    expect_tip: string;
+    label?: string;
+    description?: string;
+    version?: string;
+    status?: 'development' | 'active' | 'disabled';
+    entry?: string;
+    flow?: Record<string, { then: unknown }>;
+    edited_by: EditInfo;
+    note?: string;
+  },
+  executionContext: ExecutionContext
+): Promise<{ id: string; cid: string; manifest: RhizaManifest; prev_cid: string }> {
+  const { cid: currentCid, manifest: current } = await getRhiza(storage, tip, id);
+
+  if (currentCid !== params.expect_tip) {
+    throw new ValidationError('Conflict: entity has been modified');
+  }
+
+  const now = new Date().toISOString();
+
+  const properties: RhizaProperties = {
+    ...current.properties,
+    ...(params.label !== undefined && { label: params.label }),
+    ...(params.description !== undefined && { description: params.description }),
+    ...(params.version !== undefined && { version: params.version }),
+    ...(params.status !== undefined && { status: params.status }),
+    ...(params.entry !== undefined && { entry: params.entry }),
+    ...(params.flow !== undefined && { flow: params.flow as any }),
+    updated_at: now,
+  };
+
+  // Re-validate if flow/entry changed
+  if (params.entry !== undefined || params.flow !== undefined) {
+    const validation = validateRhizaProperties(properties);
+    if (!validation.valid) {
+      throw new ValidationError(
+        `Invalid rhiza: ${validation.errors.map(e => e.message).join(', ')}`
+      );
+    }
+  }
+
+  // Can only activate if valid
+  if (params.status === 'active') {
+    const validation = validateRhizaProperties(properties);
+    if (!validation.valid) {
+      throw new ValidationError(
+        `Cannot activate rhiza: ${validation.errors.map(e => e.message).join(', ')}`
+      );
+    }
+  }
+
+  const manifest: RhizaManifest = {
+    ...current,
+    properties,
+    ver: current.ver + 1,
+    ts: now,
+    edited_by: params.edited_by,
+  };
+
+  const cid = await storage.writeManifest(manifest);
+  await tip.writeTip(id, cid);
+
+  return { id, cid, manifest, prev_cid: currentCid };
+}
+
+export async function deleteRhiza(
+  storage: IManifestStorage,
+  tip: ITipService,
+  id: string,
+  params: { edited_by: EditInfo },
+  executionContext: ExecutionContext
+): Promise<void> {
+  const { cid } = await getRhiza(storage, tip, id);
+  await updateRhiza(storage, tip, id, {
+    expect_tip: cid,
+    status: 'disabled',
+    edited_by: params.edited_by,
+  }, executionContext);
+}
+```
+
+---
+
 ## Schema Changes
 
-### New Entity Type: `rhiza`
+### New Entity Types
 
-Add to entity type enum in schema.
-
-### New Entity Type: `batch`
-
-Already planned - type: 'batch' for scatter/gather coordination.
+| Type | Description |
+|------|-------------|
+| `klados` | Standalone action entity |
+| `rhiza` | Workflow entity |
+| `batch` | Scatter/gather coordination entity |
+| `klados_log` | Log entry entity |
 
 ### New Relationship Predicates
 
 | Predicate | Description |
 |-----------|-------------|
-| `received_from` | Log chain: child → parent |
-| `handed_off_to` | Log chain: parent → children |
+| `received_from` | Log chain: child → parent log |
+| `handed_off_to` | Log chain: parent → child logs |
+| `runs_klados` | Job collection → klados being executed |
 | `runs_rhiza` | Job collection → rhiza being executed |
-
-### Job Collection Extensions
-
-Add optional `rhiza_id` property to job collection for rhiza workflows.
 
 ---
 
 ## Permission Actions
 
-### New Actions
+### Klados Actions
+
+| Action | Description |
+|--------|-------------|
+| `klados:create` | Create a klados |
+| `klados:view` | View a klados |
+| `klados:update` | Update a klados |
+| `klados:delete` | Delete a klados |
+| `klados:invoke` | Invoke a klados |
+| `klados:manage` | Full control |
+
+### Rhiza Actions
 
 | Action | Description |
 |--------|-------------|
 | `rhiza:create` | Create a rhiza |
 | `rhiza:view` | View a rhiza |
 | `rhiza:update` | Update a rhiza |
+| `rhiza:delete` | Delete a rhiza |
 | `rhiza:invoke` | Invoke a rhiza |
 | `rhiza:manage` | Full control |
 
 ---
 
-## Migration Notes
+## Migration from Agents
+
+### Relationship to Existing Agent System
+
+| Old Concept | New Concept | Notes |
+|-------------|-------------|-------|
+| Agent entity | Klados entity | Kladoi are similar but with explicit contracts |
+| `/agents/:id/invoke` | `/kladoi/:id/invoke` | Same pattern, new endpoint |
+| Agent permissions | Klados permissions | Same permission system |
+| N/A | Rhiza entity | New workflow composition layer |
+| N/A | `/rhizai/:id/invoke` | New workflow invocation |
+
+### Migration Path
 
 1. **No breaking changes** - Existing agent system continues to work
-2. **Parallel systems** - Rhizai and agents coexist
-3. **Gradual adoption** - Can migrate workflows one at a time
+2. **Parallel systems** - Kladoi and agents coexist
+3. **Gradual adoption** - Can create kladoi from existing agents
 4. **Shared infrastructure** - Uses same job collections, permissions, signing

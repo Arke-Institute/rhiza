@@ -2,49 +2,94 @@
 
 ## Overview
 
-The validation module ensures rhiza definitions are well-formed before execution. Validation catches configuration errors early, preventing runtime failures.
+The validation module ensures rhiza and klados definitions are well-formed before execution. Validation catches configuration errors early, preventing runtime failures.
+
+Since kladoi are now first-class entities, validation happens at two levels:
+1. **Static validation** - At definition time (rhiza flow structure)
+2. **Runtime validation** - At invoke time (klados compatibility)
 
 ---
 
-## Validation Rules
+## Klados Validation (Static)
 
-### 1. Structure Validation
-
-| Rule | Description | Error Code |
-|------|-------------|------------|
-| Entry exists | Entry klados must exist in kladoi map | `MISSING_ENTRY` |
-| No orphans | All kladoi must be reachable from entry | `ORPHAN_KLADOS` (warning) |
-| Has terminal | At least one klados must have `then: { done: true }` | `NO_TERMINAL` |
-| Valid targets | All `then` targets must reference existing kladoi or valid rhiza IDs | `INVALID_TARGET` |
-| No cycles | Workflow graph must be acyclic (for non-batch paths) | `CYCLE_DETECTED` |
-
-### 2. Cardinality Validation
+When creating or updating a klados entity.
 
 | Rule | Description | Error Code |
 |------|-------------|------------|
-| Scatter requires many | Klados with `scatter` must have `produces.cardinality: 'many'` | `SCATTER_PRODUCES_ONE` |
+| Endpoint required | `endpoint` must be a valid URL | `MISSING_ENDPOINT` |
+| Types explicit | `accepts.types` must be non-empty (use `["*"]` for any) | `EMPTY_ACCEPTS_TYPES` |
+| Types explicit | `produces.types` must be non-empty (use `["*"]` for any) | `EMPTY_PRODUCES_TYPES` |
+| Cardinality explicit | `accepts.cardinality` must be 'one' or 'many' | `INVALID_CARDINALITY` |
+| Cardinality explicit | `produces.cardinality` must be 'one' or 'many' | `INVALID_CARDINALITY` |
+| Actions required | `actions_required` must be non-empty array | `EMPTY_ACTIONS` |
+
+---
+
+## Rhiza Validation (Static)
+
+When creating or updating a rhiza entity.
+
+### Structure Validation
+
+| Rule | Description | Error Code |
+|------|-------------|------------|
+| Entry exists | Entry must be a valid klados ID in `flow` | `MISSING_ENTRY` |
+| Flow references entry | `flow` must include the `entry` klados | `ENTRY_NOT_IN_FLOW` |
+| Valid targets | All `then` targets must be valid klados IDs or rhiza IDs | `INVALID_TARGET` |
+| Has terminal | At least one flow step must have `then: { done: true }` | `NO_TERMINAL` |
+| No unreachable | All kladoi in flow must be reachable from entry | `UNREACHABLE_KLADOS` (warning) |
+| No cycles | Flow graph must be acyclic (for non-batch paths) | `CYCLE_DETECTED` |
+
+### Flow Syntax Validation
+
+| Rule | Description | Error Code |
+|------|-------------|------------|
+| Valid handoff type | `then` must be: done, pass, scatter, gather, route, or rhiza | `INVALID_HANDOFF` |
+| Route has rules | `route` must have at least one rule | `EMPTY_ROUTE` |
+| Route rules valid | Each rule must have `where` and `then` | `INVALID_ROUTE_RULE` |
+
+---
+
+## Runtime Validation (At Invoke Time)
+
+When invoking a rhiza, the API validates:
+
+### Klados Existence
+
+All klados IDs in the flow must exist and be accessible.
+
+| Rule | Description | Error Code |
+|------|-------------|------------|
+| Entry exists | Entry klados entity must exist | `ENTRY_KLADOS_NOT_FOUND` |
+| All exist | All kladoi referenced in flow must exist | `KLADOS_NOT_FOUND` |
+| All active | All kladoi must have `status: 'active'` | `KLADOS_NOT_ACTIVE` |
+
+### Cardinality Compatibility
+
+| Rule | Description | Error Code |
+|------|-------------|------------|
+| Scatter produces many | Klados before `scatter` must have `produces.cardinality: 'many'` | `SCATTER_PRODUCES_ONE` |
 | Scatter target accepts one | Target of `scatter` must have `accepts.cardinality: 'one'` | `SCATTER_TARGET_MANY` |
 | Gather target accepts many | Target of `gather` must have `accepts.cardinality: 'many'` | `GATHER_TARGET_ONE` |
-| Pass cardinality match | For `pass`, cardinalities should be compatible | `CARDINALITY_MISMATCH` (warning) |
+| Pass compatible | For `pass`, cardinalities should match (warning) | `CARDINALITY_MISMATCH` |
 
-### 3. Type Validation
+### Type Compatibility (Warning Only)
 
 | Rule | Description | Error Code |
 |------|-------------|------------|
-| Type compatibility | Produced types should be subset of next klados's accepted types | `TYPE_MISMATCH` (warning) |
-| Wildcard explicit | `accepts.types` must be explicit (`["*"]` for any, not empty) | `EMPTY_TYPES` |
+| Types overlap | Produced types should overlap with accepted types | `TYPE_MISMATCH` (warning) |
 
 ---
 
 ## Implementation
 
-### `src/validation/validate-rhiza.ts`
+### `src/validation/validate-klados.ts`
 
 ```typescript
-import type { Rhiza, KladosSpec, ThenSpec, TargetRef } from '../types';
+import type { KladosEntity, KladosProperties } from '../types';
 
 /**
- * ValidationResult - Result of rhiza validation
+ * ValidationResult - Result of validation
  */
 export interface ValidationResult {
   valid: boolean;
@@ -55,68 +100,207 @@ export interface ValidationResult {
 export interface ValidationError {
   code: string;
   message: string;
-  klados?: string;
   field?: string;
 }
 
 export interface ValidationWarning {
   code: string;
   message: string;
-  klados?: string;
   field?: string;
 }
 
 /**
- * Validate a rhiza definition
+ * Validate klados properties (static validation)
  */
-export function validateRhiza(rhiza: Rhiza): ValidationResult {
+export function validateKladosProperties(
+  properties: Partial<KladosProperties>
+): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationWarning[] = [];
 
-  // 1. Entry point exists
-  if (!rhiza.kladoi[rhiza.entry]) {
+  // Endpoint required
+  if (!properties.endpoint) {
     errors.push({
-      code: 'MISSING_ENTRY',
-      message: `Entry klados '${rhiza.entry}' not found in kladoi`,
-      field: 'entry',
+      code: 'MISSING_ENDPOINT',
+      message: 'Klados must have an endpoint URL',
+      field: 'endpoint',
     });
-  }
-
-  // 2. Validate each klados
-  for (const [name, spec] of Object.entries(rhiza.kladoi)) {
-    validateKlados(name, spec, rhiza, errors, warnings);
-  }
-
-  // 3. Check for orphan kladoi
-  const reachable = findReachableKladoi(rhiza);
-  for (const name of Object.keys(rhiza.kladoi)) {
-    if (!reachable.has(name)) {
-      warnings.push({
-        code: 'ORPHAN_KLADOS',
-        message: `Klados '${name}' is not reachable from entry point`,
-        klados: name,
+  } else {
+    try {
+      new URL(properties.endpoint);
+    } catch {
+      errors.push({
+        code: 'INVALID_ENDPOINT',
+        message: `Invalid endpoint URL: ${properties.endpoint}`,
+        field: 'endpoint',
       });
     }
   }
 
-  // 4. Check for at least one terminal
-  const hasTerminal = Object.values(rhiza.kladoi).some(
-    (spec) => spec.then && 'done' in spec.then && spec.then.done
+  // Accepts validation
+  if (!properties.accepts?.types || properties.accepts.types.length === 0) {
+    errors.push({
+      code: 'EMPTY_ACCEPTS_TYPES',
+      message: 'accepts.types must be non-empty (use ["*"] for any)',
+      field: 'accepts.types',
+    });
+  }
+
+  if (
+    properties.accepts?.cardinality &&
+    !['one', 'many'].includes(properties.accepts.cardinality)
+  ) {
+    errors.push({
+      code: 'INVALID_CARDINALITY',
+      message: 'accepts.cardinality must be "one" or "many"',
+      field: 'accepts.cardinality',
+    });
+  }
+
+  // Produces validation
+  if (!properties.produces?.types || properties.produces.types.length === 0) {
+    errors.push({
+      code: 'EMPTY_PRODUCES_TYPES',
+      message: 'produces.types must be non-empty (use ["*"] for any)',
+      field: 'produces.types',
+    });
+  }
+
+  if (
+    properties.produces?.cardinality &&
+    !['one', 'many'].includes(properties.produces.cardinality)
+  ) {
+    errors.push({
+      code: 'INVALID_CARDINALITY',
+      message: 'produces.cardinality must be "one" or "many"',
+      field: 'produces.cardinality',
+    });
+  }
+
+  // Actions required
+  if (
+    !properties.actions_required ||
+    properties.actions_required.length === 0
+  ) {
+    errors.push({
+      code: 'EMPTY_ACTIONS',
+      message: 'actions_required must be non-empty',
+      field: 'actions_required',
+    });
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+```
+
+### `src/validation/validate-rhiza.ts`
+
+```typescript
+import type { RhizaEntity, RhizaProperties, FlowStep, ThenSpec } from '../types';
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+}
+
+export interface ValidationError {
+  code: string;
+  message: string;
+  klados_id?: string;
+  field?: string;
+}
+
+export interface ValidationWarning {
+  code: string;
+  message: string;
+  klados_id?: string;
+  field?: string;
+}
+
+/**
+ * Validate rhiza properties (static validation)
+ *
+ * This validates the structure of the rhiza definition.
+ * It does NOT validate that kladoi actually exist (that's runtime).
+ */
+export function validateRhizaProperties(
+  properties: Partial<RhizaProperties>
+): ValidationResult {
+  const errors: ValidationError[] = [];
+  const warnings: ValidationWarning[] = [];
+
+  // Entry required
+  if (!properties.entry) {
+    errors.push({
+      code: 'MISSING_ENTRY',
+      message: 'Rhiza must have an entry klados ID',
+      field: 'entry',
+    });
+  }
+
+  // Flow required
+  if (!properties.flow || Object.keys(properties.flow).length === 0) {
+    errors.push({
+      code: 'EMPTY_FLOW',
+      message: 'Rhiza must have at least one flow step',
+      field: 'flow',
+    });
+    return { valid: false, errors, warnings };
+  }
+
+  // Entry must be in flow
+  if (properties.entry && !properties.flow[properties.entry]) {
+    errors.push({
+      code: 'ENTRY_NOT_IN_FLOW',
+      message: `Entry klados '${properties.entry}' is not in flow`,
+      field: 'entry',
+    });
+  }
+
+  // Validate each flow step
+  for (const [kladosId, step] of Object.entries(properties.flow)) {
+    validateFlowStep(kladosId, step, properties.flow, errors, warnings);
+  }
+
+  // Check for at least one terminal
+  const hasTerminal = Object.values(properties.flow).some(
+    (step) => step.then && 'done' in step.then && step.then.done
   );
   if (!hasTerminal) {
     errors.push({
       code: 'NO_TERMINAL',
-      message: 'Rhiza has no terminal klados (none with then: { done: true })',
+      message: 'Rhiza must have at least one terminal step (then: { done: true })',
     });
   }
 
-  // 5. Check for cycles (non-batch paths only)
-  const cycles = detectCycles(rhiza);
-  for (const cycle of cycles) {
-    errors.push({
-      code: 'CYCLE_DETECTED',
-      message: `Cycle detected: ${cycle.join(' → ')}`,
-    });
+  // Check for unreachable kladoi
+  if (properties.entry && properties.flow[properties.entry]) {
+    const reachable = findReachableKladoi(properties.entry, properties.flow);
+    for (const kladosId of Object.keys(properties.flow)) {
+      if (!reachable.has(kladosId)) {
+        warnings.push({
+          code: 'UNREACHABLE_KLADOS',
+          message: `Klados '${kladosId}' is not reachable from entry`,
+          klados_id: kladosId,
+        });
+      }
+    }
+  }
+
+  // Check for cycles
+  if (properties.entry) {
+    const cycles = detectCycles(properties.entry, properties.flow);
+    for (const cycle of cycles) {
+      errors.push({
+        code: 'CYCLE_DETECTED',
+        message: `Cycle detected: ${cycle.join(' → ')}`,
+      });
+    }
   }
 
   return {
@@ -127,167 +311,156 @@ export function validateRhiza(rhiza: Rhiza): ValidationResult {
 }
 
 /**
- * Validate a single klados spec
+ * Validate a single flow step
  */
-function validateKlados(
-  name: string,
-  spec: KladosSpec,
-  rhiza: Rhiza,
+function validateFlowStep(
+  kladosId: string,
+  step: FlowStep,
+  flow: Record<string, FlowStep>,
   errors: ValidationError[],
   warnings: ValidationWarning[]
 ): void {
-  // Validate accepts
-  if (!spec.accepts?.types || spec.accepts.types.length === 0) {
+  if (!step.then) {
     errors.push({
-      code: 'EMPTY_TYPES',
-      message: `Klados '${name}' has empty accepts.types (use ["*"] for any)`,
-      klados: name,
-      field: 'accepts.types',
+      code: 'MISSING_THEN',
+      message: `Flow step for '${kladosId}' is missing 'then' specification`,
+      klados_id: kladosId,
     });
+    return;
   }
 
-  // Validate produces
-  if (!spec.produces?.types || spec.produces.types.length === 0) {
-    errors.push({
-      code: 'EMPTY_TYPES',
-      message: `Klados '${name}' has empty produces.types (use ["*"] for any)`,
-      klados: name,
-      field: 'produces.types',
-    });
-  }
-
-  // Validate then targets
-  if (spec.then) {
-    validateThen(name, spec, spec.then, rhiza, errors, warnings);
-  }
+  validateThen(kladosId, step.then, flow, errors, warnings);
 }
 
 /**
  * Validate a then spec (recursive for routes)
  */
 function validateThen(
-  kladosName: string,
-  spec: KladosSpec,
+  kladosId: string,
   then: ThenSpec,
-  rhiza: Rhiza,
+  flow: Record<string, FlowStep>,
   errors: ValidationError[],
   warnings: ValidationWarning[]
 ): void {
   if ('done' in then) {
-    // Terminal - no validation needed
+    // Terminal - valid
     return;
   }
 
   if ('pass' in then) {
-    validateTarget(kladosName, 'pass', then.pass, spec, rhiza, errors, warnings);
+    validateTarget(kladosId, 'pass', then.pass, flow, errors);
+    return;
   }
 
   if ('scatter' in then) {
-    // Scatter requires produces.cardinality === 'many'
-    if (spec.produces.cardinality !== 'many') {
-      errors.push({
-        code: 'SCATTER_PRODUCES_ONE',
-        message: `Klados '${kladosName}' uses scatter but produces.cardinality is 'one'`,
-        klados: kladosName,
-        field: 'then.scatter',
-      });
-    }
-    validateTarget(kladosName, 'scatter', then.scatter, spec, rhiza, errors, warnings, true);
+    validateTarget(kladosId, 'scatter', then.scatter, flow, errors);
+    return;
   }
 
   if ('gather' in then) {
-    validateTarget(kladosName, 'gather', then.gather, spec, rhiza, errors, warnings, false, true);
+    validateTarget(kladosId, 'gather', then.gather, flow, errors);
+    return;
+  }
+
+  if ('rhiza' in then) {
+    // Sub-rhiza reference - valid ID format check only
+    if (!then.rhiza || typeof then.rhiza !== 'string') {
+      errors.push({
+        code: 'INVALID_RHIZA_REF',
+        message: `Invalid rhiza reference in '${kladosId}'`,
+        klados_id: kladosId,
+      });
+    }
+    return;
   }
 
   if ('route' in then) {
-    for (const rule of then.route) {
-      // Recursively validate each route's then
-      validateThen(kladosName, spec, rule.then, rhiza, errors, warnings);
-    }
-  }
-}
-
-/**
- * Validate a target reference
- */
-function validateTarget(
-  kladosName: string,
-  handoffType: string,
-  target: TargetRef,
-  sourceSpec: KladosSpec,
-  rhiza: Rhiza,
-  errors: ValidationError[],
-  warnings: ValidationWarning[],
-  isScatter: boolean = false,
-  isGather: boolean = false
-): void {
-  if (typeof target === 'string') {
-    // Local klados reference
-    const targetSpec = rhiza.kladoi[target];
-    if (!targetSpec) {
+    if (!then.route || then.route.length === 0) {
       errors.push({
-        code: 'INVALID_TARGET',
-        message: `Klados '${kladosName}' references unknown klados '${target}'`,
-        klados: kladosName,
-        field: `then.${handoffType}`,
+        code: 'EMPTY_ROUTE',
+        message: `Route in '${kladosId}' has no rules`,
+        klados_id: kladosId,
       });
       return;
     }
 
-    // Cardinality checks
-    if (isScatter && targetSpec.accepts.cardinality !== 'one') {
-      errors.push({
-        code: 'SCATTER_TARGET_MANY',
-        message: `Klados '${kladosName}' scatters to '${target}' which accepts 'many', not 'one'`,
-        klados: kladosName,
-        field: `then.scatter`,
-      });
+    for (const rule of then.route) {
+      if (!rule.where || !rule.then) {
+        errors.push({
+          code: 'INVALID_ROUTE_RULE',
+          message: `Route rule in '${kladosId}' is missing 'where' or 'then'`,
+          klados_id: kladosId,
+        });
+        continue;
+      }
+      // Recursively validate the rule's then
+      validateThen(kladosId, rule.then, flow, errors, warnings);
     }
+    return;
+  }
 
-    if (isGather && targetSpec.accepts.cardinality !== 'many') {
-      errors.push({
-        code: 'GATHER_TARGET_ONE',
-        message: `Klados '${kladosName}' gathers to '${target}' which accepts 'one', not 'many'`,
-        klados: kladosName,
-        field: `then.gather`,
-      });
-    }
+  errors.push({
+    code: 'INVALID_HANDOFF',
+    message: `Unknown handoff type in '${kladosId}': ${JSON.stringify(then)}`,
+    klados_id: kladosId,
+  });
+}
 
-    // Type compatibility (warning only)
-    if (!typesCompatible(sourceSpec.produces.types, targetSpec.accepts.types)) {
-      warnings.push({
-        code: 'TYPE_MISMATCH',
-        message: `Klados '${kladosName}' produces ${JSON.stringify(sourceSpec.produces.types)} but '${target}' accepts ${JSON.stringify(targetSpec.accepts.types)}`,
-        klados: kladosName,
-        field: `then.${handoffType}`,
-      });
-    }
+/**
+ * Validate a target reference
+ *
+ * Note: This only validates that the target is in the flow.
+ * It does NOT validate that the klados entity actually exists.
+ */
+function validateTarget(
+  sourceKladosId: string,
+  handoffType: string,
+  target: string,
+  flow: Record<string, FlowStep>,
+  errors: ValidationError[]
+): void {
+  if (!target || typeof target !== 'string') {
+    errors.push({
+      code: 'INVALID_TARGET',
+      message: `Invalid target in '${sourceKladosId}' ${handoffType}`,
+      klados_id: sourceKladosId,
+      field: `then.${handoffType}`,
+    });
+    return;
+  }
 
-  } else if ('rhiza' in target) {
-    // Sub-rhiza reference - we can't validate the rhiza exists at definition time
-    // (it's an entity ID that may not be loaded)
-    // Runtime validation will check this
+  // Target must be in flow (it's a klados ID)
+  if (!flow[target]) {
+    errors.push({
+      code: 'INVALID_TARGET',
+      message: `Target '${target}' in '${sourceKladosId}' is not in flow`,
+      klados_id: sourceKladosId,
+      field: `then.${handoffType}`,
+    });
   }
 }
 
 /**
- * Find all kladoi reachable from entry point
+ * Find all kladoi reachable from entry
  */
-function findReachableKladoi(rhiza: Rhiza): Set<string> {
+function findReachableKladoi(
+  entry: string,
+  flow: Record<string, FlowStep>
+): Set<string> {
   const reachable = new Set<string>();
-  const queue: string[] = [rhiza.entry];
+  const queue: string[] = [entry];
 
   while (queue.length > 0) {
     const current = queue.shift()!;
     if (reachable.has(current)) continue;
     reachable.add(current);
 
-    const spec = rhiza.kladoi[current];
-    if (!spec) continue;
+    const step = flow[current];
+    if (!step) continue;
 
-    const targets = extractTargets(spec.then);
+    const targets = extractTargets(step.then);
     for (const target of targets) {
-      if (typeof target === 'string' && !reachable.has(target)) {
+      if (!reachable.has(target)) {
         queue.push(target);
       }
     }
@@ -297,14 +470,15 @@ function findReachableKladoi(rhiza: Rhiza): Set<string> {
 }
 
 /**
- * Extract all target klados names from a ThenSpec
+ * Extract all target klados IDs from a ThenSpec
  */
-function extractTargets(then: ThenSpec): TargetRef[] {
+function extractTargets(then: ThenSpec): string[] {
   if (!then) return [];
   if ('done' in then) return [];
   if ('pass' in then) return [then.pass];
   if ('scatter' in then) return [then.scatter];
   if ('gather' in then) return [then.gather];
+  if ('rhiza' in then) return []; // Sub-rhiza, not a local target
   if ('route' in then) {
     return then.route.flatMap((rule) => extractTargets(rule.then));
   }
@@ -312,17 +486,19 @@ function extractTargets(then: ThenSpec): TargetRef[] {
 }
 
 /**
- * Detect cycles in the workflow graph
- * Only considers non-batch paths (scatter→gather is not a cycle)
+ * Detect cycles in the flow graph
+ * Only considers non-scatter paths (scatter→gather is not a cycle)
  */
-function detectCycles(rhiza: Rhiza): string[][] {
+function detectCycles(
+  entry: string,
+  flow: Record<string, FlowStep>
+): string[][] {
   const cycles: string[][] = [];
   const visited = new Set<string>();
   const path: string[] = [];
 
   function dfs(current: string): void {
     if (path.includes(current)) {
-      // Found cycle
       const cycleStart = path.indexOf(current);
       cycles.push([...path.slice(cycleStart), current]);
       return;
@@ -332,42 +508,235 @@ function detectCycles(rhiza: Rhiza): string[][] {
     visited.add(current);
     path.push(current);
 
-    const spec = rhiza.kladoi[current];
-    if (spec) {
-      // Only follow non-scatter paths (scatter breaks the direct chain)
-      const then = spec.then;
-      if (then && !('scatter' in then) && !('done' in then)) {
-        const targets = extractTargets(then);
-        for (const target of targets) {
-          if (typeof target === 'string') {
-            dfs(target);
-          }
-        }
+    const step = flow[current];
+    if (step?.then && !('scatter' in step.then) && !('done' in step.then)) {
+      const targets = extractTargets(step.then);
+      for (const target of targets) {
+        dfs(target);
       }
     }
 
     path.pop();
   }
 
-  dfs(rhiza.entry);
+  dfs(entry);
   return cycles;
 }
+```
 
-/**
- * Check if produced types are compatible with accepted types
- */
-function typesCompatible(produced: string[], accepted: string[]): boolean {
-  // Wildcard accepts anything
-  if (accepted.includes('*')) return true;
+### `src/validation/validate-runtime.ts`
 
-  // Check if any produced type matches any accepted type (with glob support)
-  return produced.some((p) =>
-    accepted.some((a) => typeMatches(p, a))
-  );
+```typescript
+import type { ArkeClient } from '@arke-institute/sdk';
+import type { KladosEntity, RhizaProperties, FlowStep, ThenSpec } from '../types';
+
+export interface RuntimeValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+  kladoi: Map<string, KladosEntity>;
+}
+
+export interface ValidationError {
+  code: string;
+  message: string;
+  klados_id?: string;
+}
+
+export interface ValidationWarning {
+  code: string;
+  message: string;
+  klados_id?: string;
 }
 
 /**
- * Check if a type matches a pattern (simple glob support)
+ * Validate a rhiza at runtime
+ *
+ * This loads all kladoi and validates:
+ * 1. All kladoi exist and are active
+ * 2. Cardinality compatibility
+ * 3. Type compatibility (warnings)
+ */
+export async function validateRhizaRuntime(
+  client: ArkeClient,
+  properties: RhizaProperties
+): Promise<RuntimeValidationResult> {
+  const errors: ValidationError[] = [];
+  const warnings: ValidationWarning[] = [];
+  const kladoi = new Map<string, KladosEntity>();
+
+  // Collect all klados IDs from flow
+  const kladosIds = new Set<string>(Object.keys(properties.flow));
+
+  // Load all kladoi
+  for (const kladosId of kladosIds) {
+    try {
+      const { data: klados } = await client.api.GET('/kladoi/{id}', {
+        params: { path: { id: kladosId } },
+      });
+
+      if (!klados) {
+        errors.push({
+          code: 'KLADOS_NOT_FOUND',
+          message: `Klados '${kladosId}' not found`,
+          klados_id: kladosId,
+        });
+        continue;
+      }
+
+      if (klados.properties.status !== 'active') {
+        errors.push({
+          code: 'KLADOS_NOT_ACTIVE',
+          message: `Klados '${kladosId}' is not active (status: ${klados.properties.status})`,
+          klados_id: kladosId,
+        });
+      }
+
+      kladoi.set(kladosId, klados as KladosEntity);
+    } catch (e) {
+      errors.push({
+        code: 'KLADOS_NOT_FOUND',
+        message: `Failed to load klados '${kladosId}': ${e instanceof Error ? e.message : 'Unknown error'}`,
+        klados_id: kladosId,
+      });
+    }
+  }
+
+  // Skip cardinality/type validation if we're missing kladoi
+  if (errors.length > 0) {
+    return { valid: false, errors, warnings, kladoi };
+  }
+
+  // Validate cardinality compatibility
+  for (const [kladosId, step] of Object.entries(properties.flow)) {
+    validateCardinalityRuntime(kladosId, step.then, kladoi, errors, warnings);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    kladoi,
+  };
+}
+
+/**
+ * Validate cardinality at runtime
+ */
+function validateCardinalityRuntime(
+  kladosId: string,
+  then: ThenSpec,
+  kladoi: Map<string, KladosEntity>,
+  errors: ValidationError[],
+  warnings: ValidationWarning[]
+): void {
+  if (!then || 'done' in then || 'rhiza' in then) {
+    return;
+  }
+
+  const sourceKlados = kladoi.get(kladosId);
+  if (!sourceKlados) return;
+
+  const sourceProduces = sourceKlados.properties.produces;
+
+  if ('scatter' in then) {
+    // Scatter requires produces.cardinality === 'many'
+    if (sourceProduces.cardinality !== 'many') {
+      errors.push({
+        code: 'SCATTER_PRODUCES_ONE',
+        message: `Klados '${kladosId}' uses scatter but produces.cardinality is 'one'`,
+        klados_id: kladosId,
+      });
+    }
+
+    // Scatter target must accept 'one'
+    const targetKlados = kladoi.get(then.scatter);
+    if (targetKlados && targetKlados.properties.accepts.cardinality !== 'one') {
+      errors.push({
+        code: 'SCATTER_TARGET_MANY',
+        message: `Scatter target '${then.scatter}' accepts 'many', should accept 'one'`,
+        klados_id: kladosId,
+      });
+    }
+
+    // Check type compatibility (warning)
+    if (targetKlados) {
+      checkTypeCompatibility(
+        kladosId,
+        sourceProduces.types,
+        targetKlados.properties.accepts.types,
+        warnings
+      );
+    }
+  }
+
+  if ('gather' in then) {
+    // Gather target must accept 'many'
+    const targetKlados = kladoi.get(then.gather);
+    if (targetKlados && targetKlados.properties.accepts.cardinality !== 'many') {
+      errors.push({
+        code: 'GATHER_TARGET_ONE',
+        message: `Gather target '${then.gather}' accepts 'one', should accept 'many'`,
+        klados_id: kladosId,
+      });
+    }
+  }
+
+  if ('pass' in then) {
+    const targetKlados = kladoi.get(then.pass);
+    if (targetKlados) {
+      // Cardinality mismatch warning
+      if (sourceProduces.cardinality !== targetKlados.properties.accepts.cardinality) {
+        warnings.push({
+          code: 'CARDINALITY_MISMATCH',
+          message: `Klados '${kladosId}' produces '${sourceProduces.cardinality}' but '${then.pass}' accepts '${targetKlados.properties.accepts.cardinality}'`,
+          klados_id: kladosId,
+        });
+      }
+
+      // Type compatibility (warning)
+      checkTypeCompatibility(
+        kladosId,
+        sourceProduces.types,
+        targetKlados.properties.accepts.types,
+        warnings
+      );
+    }
+  }
+
+  if ('route' in then) {
+    for (const rule of then.route) {
+      validateCardinalityRuntime(kladosId, rule.then, kladoi, errors, warnings);
+    }
+  }
+}
+
+/**
+ * Check type compatibility (warning only)
+ */
+function checkTypeCompatibility(
+  kladosId: string,
+  produced: string[],
+  accepted: string[],
+  warnings: ValidationWarning[]
+): void {
+  if (accepted.includes('*')) return;
+
+  const compatible = produced.some((p) =>
+    accepted.some((a) => typeMatches(p, a))
+  );
+
+  if (!compatible) {
+    warnings.push({
+      code: 'TYPE_MISMATCH',
+      message: `Klados '${kladosId}' produces ${JSON.stringify(produced)} but target accepts ${JSON.stringify(accepted)}`,
+      klados_id: kladosId,
+    });
+  }
+}
+
+/**
+ * Check if a type matches a pattern
  */
 function typeMatches(type: string, pattern: string): boolean {
   if (pattern === '*') return true;
@@ -383,125 +752,20 @@ function typeMatches(type: string, pattern: string): boolean {
 }
 ```
 
-### `src/validation/validate-cardinality.ts`
-
-```typescript
-import type { Rhiza, KladosSpec } from '../types';
-
-/**
- * Validate cardinality consistency across the workflow
- *
- * This is a more thorough check that traces data flow through the
- * entire workflow to ensure cardinalities are consistent.
- */
-export interface CardinalityValidationResult {
-  valid: boolean;
-  errors: CardinalityError[];
-}
-
-export interface CardinalityError {
-  from: string;
-  to: string;
-  message: string;
-}
-
-export function validateCardinality(rhiza: Rhiza): CardinalityValidationResult {
-  const errors: CardinalityError[] = [];
-
-  // Trace data flow from entry through all paths
-  traceFlow(rhiza.entry, 'one', rhiza, errors, new Set());
-
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
-}
-
-function traceFlow(
-  current: string,
-  inputCardinality: 'one' | 'many',
-  rhiza: Rhiza,
-  errors: CardinalityError[],
-  visited: Set<string>
-): void {
-  if (visited.has(current)) return;
-  visited.add(current);
-
-  const spec = rhiza.kladoi[current];
-  if (!spec) return;
-
-  // Check input cardinality matches what we're receiving
-  if (spec.accepts.cardinality !== inputCardinality) {
-    // This might be okay in some cases (gather receives many from scatter)
-    // Only error if it's truly incompatible
-    if (inputCardinality === 'many' && spec.accepts.cardinality === 'one') {
-      // This is only okay if we're coming from a scatter (parallel invocation)
-      // In that case, each instance receives 'one'
-      // This is handled by the scatter logic, not a validation error
-    }
-  }
-
-  const then = spec.then;
-  if (!then || 'done' in then) return;
-
-  if ('pass' in then) {
-    const target = typeof then.pass === 'string' ? then.pass : null;
-    if (target) {
-      traceFlow(target, spec.produces.cardinality, rhiza, errors, visited);
-    }
-  }
-
-  if ('scatter' in then) {
-    const target = typeof then.scatter === 'string' ? then.scatter : null;
-    if (target) {
-      // Scatter: even though we produce 'many', each invocation receives 'one'
-      traceFlow(target, 'one', rhiza, errors, new Set()); // Fresh visited set
-    }
-  }
-
-  if ('gather' in then) {
-    const target = typeof then.gather === 'string' ? then.gather : null;
-    if (target) {
-      // Gather: collecting results, so target receives 'many'
-      traceFlow(target, 'many', rhiza, errors, visited);
-    }
-  }
-
-  if ('route' in then) {
-    for (const rule of then.route) {
-      // Each route branch inherits our output cardinality
-      // Recursively trace each branch
-      const targets = extractTargetsFromThen(rule.then);
-      for (const target of targets) {
-        if (typeof target === 'string') {
-          traceFlow(target, spec.produces.cardinality, rhiza, errors, visited);
-        }
-      }
-    }
-  }
-}
-
-function extractTargetsFromThen(then: any): string[] {
-  if (!then) return [];
-  if ('done' in then) return [];
-  if ('pass' in then && typeof then.pass === 'string') return [then.pass];
-  if ('scatter' in then && typeof then.scatter === 'string') return [then.scatter];
-  if ('gather' in then && typeof then.gather === 'string') return [then.gather];
-  if ('route' in then) {
-    return then.route.flatMap((r: any) => extractTargetsFromThen(r.then));
-  }
-  return [];
-}
-```
-
 ### `src/validation/index.ts`
 
 ```typescript
-export { validateRhiza } from './validate-rhiza';
-export type { ValidationResult, ValidationError, ValidationWarning } from './validate-rhiza';
+export { validateKladosProperties } from './validate-klados';
+export { validateRhizaProperties } from './validate-rhiza';
+export { validateRhizaRuntime } from './validate-runtime';
 
-export { validateCardinality } from './validate-cardinality';
-export type { CardinalityValidationResult, CardinalityError } from './validate-cardinality';
+export type {
+  ValidationResult,
+  ValidationError,
+  ValidationWarning,
+} from './validate-rhiza';
+
+export type { RuntimeValidationResult } from './validate-runtime';
 ```
 
 ---
@@ -509,43 +773,47 @@ export type { CardinalityValidationResult, CardinalityError } from './validate-c
 ## Usage Example
 
 ```typescript
-import { validateRhiza, validateCardinality } from '@arke-institute/rhiza';
+import {
+  validateKladosProperties,
+  validateRhizaProperties,
+  validateRhizaRuntime,
+} from '@arke-institute/rhiza';
 
-const rhiza: Rhiza = {
-  id: 'II01abc...',
-  name: 'My Workflow',
+// Static validation (at creation time)
+const kladosResult = validateKladosProperties({
+  label: 'OCR Service',
+  endpoint: 'https://ocr.arke.institute',
+  actions_required: ['file:view', 'entity:update'],
+  accepts: { types: ['file/jpeg'], cardinality: 'one' },
+  produces: { types: ['text/ocr'], cardinality: 'one' },
+});
+
+if (!kladosResult.valid) {
+  console.error('Klados validation errors:', kladosResult.errors);
+}
+
+// Static rhiza validation
+const rhizaResult = validateRhizaProperties({
+  label: 'OCR Pipeline',
   version: '1.0',
-  entry: 'step-a',
-  kladoi: {
-    'step-a': {
-      action: 'II01agent1...',
-      accepts: { types: ['file/pdf'], cardinality: 'one' },
-      produces: { types: ['file/jpeg'], cardinality: 'many' },
-      then: { scatter: 'step-b' },
-    },
-    'step-b': {
-      action: 'II01agent2...',
-      accepts: { types: ['file/jpeg'], cardinality: 'one' },
-      produces: { types: ['text/ocr'], cardinality: 'one' },
-      then: { gather: 'step-c' },
-    },
-    'step-c': {
-      action: 'II01agent3...',
-      accepts: { types: ['text/ocr'], cardinality: 'many' },
-      produces: { types: ['file/text'], cardinality: 'one' },
-      then: { done: true },
-    },
+  entry: 'II01klados_ocr...',
+  flow: {
+    'II01klados_ocr...': { then: { pass: 'II01klados_text...' } },
+    'II01klados_text...': { then: { done: true } },
   },
-};
+});
 
-const result = validateRhiza(rhiza);
+if (!rhizaResult.valid) {
+  console.error('Rhiza validation errors:', rhizaResult.errors);
+}
 
-if (!result.valid) {
-  console.error('Validation errors:', result.errors);
+// Runtime validation (at invoke time)
+const runtimeResult = await validateRhizaRuntime(client, rhizaProperties);
+
+if (!runtimeResult.valid) {
+  console.error('Runtime validation errors:', runtimeResult.errors);
 } else {
-  console.log('Rhiza is valid!');
-  if (result.warnings.length > 0) {
-    console.warn('Warnings:', result.warnings);
-  }
+  // runtimeResult.kladoi contains all loaded klados entities
+  console.log('Loaded kladoi:', runtimeResult.kladoi.size);
 }
 ```

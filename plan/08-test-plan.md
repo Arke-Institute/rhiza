@@ -16,42 +16,72 @@ Test pure logic and mock API interactions.
 
 ### What We Test
 
-#### 1.1 Validation (Pure - no mocks needed)
+#### 1.1 Klados Validation (Pure - no mocks needed)
 
 ```typescript
-// src/__tests__/validation.test.ts
+// src/__tests__/unit/validation/klados.test.ts
 
-describe('validateRhiza', () => {
+describe('validateKladosProperties', () => {
+  it('passes for valid klados properties');
+  it('fails when endpoint is missing');
+  it('fails when endpoint is invalid URL');
+  it('fails when accepts.types is empty');
+  it('fails when produces.types is empty');
+  it('fails when cardinality is invalid');
+  it('fails when actions_required is empty');
+  it('warns but passes for valid with wildcard types ["*"]');
+});
+```
+
+#### 1.2 Rhiza Validation (Pure - no mocks needed)
+
+```typescript
+// src/__tests__/unit/validation/rhiza.test.ts
+
+describe('validateRhizaProperties', () => {
   describe('structure validation', () => {
-    it('passes for valid linear workflow');
-    it('passes for valid scatter-gather workflow');
-    it('passes for valid conditional workflow');
-    it('fails when entry klados is missing');
-    it('fails when target klados does not exist');
-    it('fails when no terminal klados exists');
+    it('passes for valid linear flow');
+    it('passes for valid scatter-gather flow');
+    it('passes for valid conditional flow');
+    it('fails when entry klados ID is missing');
+    it('fails when entry klados ID is not in flow');
+    it('fails when target klados ID does not exist in flow');
+    it('fails when no terminal step exists');
     it('fails when cycle detected');
-    it('warns about orphan kladoi (unreachable from entry)');
+    it('warns about unreachable klados IDs');
   });
 
-  describe('cardinality validation', () => {
-    it('fails when scatter klados produces one');
-    it('fails when scatter target accepts many');
-    it('fails when gather target accepts one');
-    it('warns about cardinality mismatch in pass');
-  });
-
-  describe('type validation', () => {
-    it('fails when accepts.types is empty');
-    it('fails when produces.types is empty');
-    it('warns about type mismatch between kladoi');
+  describe('handoff validation', () => {
+    it('fails when then spec is missing');
+    it('fails when then has unknown handoff type');
+    it('fails when route has no rules');
+    it('fails when route rule is missing where or then');
   });
 });
 ```
 
-#### 1.2 Route Matching (Pure - no mocks needed)
+#### 1.3 Runtime Validation (Mock client)
 
 ```typescript
-// src/__tests__/route.test.ts
+// src/__tests__/unit/validation/runtime.test.ts
+
+describe('validateRhizaRuntime', () => {
+  it('passes when all kladoi exist and are active');
+  it('fails when klados not found');
+  it('fails when klados is not active');
+  it('fails when scatter klados produces one');
+  it('fails when scatter target accepts many');
+  it('fails when gather target accepts one');
+  it('warns about cardinality mismatch in pass');
+  it('warns about type mismatch');
+  it('returns loaded kladoi map on success');
+});
+```
+
+#### 1.4 Route Matching (Pure - no mocks needed)
+
+```typescript
+// src/__tests__/unit/route.test.ts
 
 describe('evaluateWhere', () => {
   it('matches string equality');
@@ -63,39 +93,39 @@ describe('evaluateWhere', () => {
 });
 
 describe('matchRoute', () => {
+  // Needs mock client for entity fetch
   it('returns first matching rule');
   it('returns null when no rules match');
   it('checks rules in order (first wins)');
 });
 ```
 
-#### 1.3 Scatter Logic (Partial mock)
+#### 1.5 Scatter Logic (Partial mock)
 
 ```typescript
-// src/__tests__/scatter.test.ts
+// src/__tests__/unit/scatter.test.ts
 
 describe('findGatherTarget', () => {
   // Pure - no mock needed
-  it('finds gather target from scatter klados');
-  it('traces through multiple kladoi to find gather');
+  it('finds gather target from scatter klados flow step');
   it('throws when scatter target has no gather');
-  it('returns empty string for sub-rhiza target');
 });
 
 describe('createScatter', () => {
   // Needs mock client
   it('creates batch entity with correct properties');
-  it('invokes target once per output');
+  it('invokes target klados once per output');
   it('passes batch context to each invocation');
   it('returns all invocation records');
   it('handles empty outputs array');
+  it('respects concurrency limit');
 });
 ```
 
-#### 1.4 Gather Logic (Mock client)
+#### 1.6 Gather Logic (Mock client)
 
 ```typescript
-// src/__tests__/gather.test.ts
+// src/__tests__/unit/gather.test.ts
 
 describe('completeBatchSlot', () => {
   it('updates slot to complete');
@@ -113,10 +143,49 @@ describe('errorBatchSlot', () => {
 });
 ```
 
-#### 1.5 Log Chain Traversal (Mock data)
+#### 1.7 Handoff Interpretation (Mock client)
 
 ```typescript
-// src/__tests__/traverse.test.ts
+// src/__tests__/unit/interpret.test.ts
+
+describe('interpretThen', () => {
+  describe('done', () => {
+    it('returns action: done for terminal');
+    it('handles sub-rhiza completion callback');
+  });
+
+  describe('pass', () => {
+    it('invokes target klados with outputs');
+    it('returns handoff record');
+  });
+
+  describe('scatter', () => {
+    it('creates batch and invokes target for each output');
+    it('returns batch ID and invocations');
+  });
+
+  describe('gather', () => {
+    it('updates batch slot');
+    it('triggers gather target when last');
+    it('returns gather_wait when not last');
+  });
+
+  describe('rhiza', () => {
+    it('invokes sub-rhiza');
+    it('passes parent context for callback');
+  });
+
+  describe('route', () => {
+    it('matches and follows route rule');
+    it('throws when no route matches');
+  });
+});
+```
+
+#### 1.8 Log Chain Traversal (Mock data)
+
+```typescript
+// src/__tests__/unit/traverse.test.ts
 
 describe('findLeaves', () => {
   it('finds terminal nodes (no children)');
@@ -142,10 +211,10 @@ describe('buildLogTree', () => {
 });
 ```
 
-#### 1.6 Resume Logic (Mock client)
+#### 1.9 Resume Logic (Mock client)
 
 ```typescript
-// src/__tests__/resume.test.ts
+// src/__tests__/unit/resume.test.ts
 
 describe('resumeWorkflow', () => {
   it('finds error leaves and re-invokes');
@@ -164,10 +233,10 @@ describe('canResume', () => {
 });
 ```
 
-#### 1.7 Status Building (Mock data)
+#### 1.10 Status Building (Mock data)
 
 ```typescript
-// src/__tests__/status.test.ts
+// src/__tests__/unit/status.test.ts
 
 describe('buildStatusFromLogs', () => {
   it('returns done when all leaves done');
@@ -185,7 +254,10 @@ describe('buildStatusFromLogs', () => {
 // src/__tests__/fixtures/mock-client.ts
 
 interface MockClientConfig {
-  // Pre-loaded entities (GET returns these)
+  // Pre-loaded klados entities (GET /kladoi/:id returns these)
+  kladoi?: Record<string, { properties: KladosProperties; cid: string }>;
+
+  // Pre-loaded entities (GET /entities/:id returns these)
   entities?: Record<string, { properties: Record<string, unknown>; cid: string }>;
 
   // Batch state (for gather tests)
@@ -203,23 +275,50 @@ interface MockClientConfig {
 
 function createMockClient(config: MockClientConfig): MockArkeClient {
   const state = {
+    kladoi: new Map(Object.entries(config.kladoi ?? {})),
     entities: new Map(Object.entries(config.entities ?? {})),
     created: [] as Array<{ type: string; properties: unknown }>,
     updated: [] as Array<{ id: string; properties: unknown }>,
-    invoked: [] as Array<{ agentId: string; request: unknown }>,
+    invoked: [] as Array<{ kladosId: string; request: unknown }>,
     updateAttempts: 0,
   };
 
   return {
     api: {
       GET: async (path, options) => {
-        // Return from state.entities
+        if (path.includes('/kladoi/')) {
+          const id = options.params.path.id;
+          const klados = state.kladoi.get(id);
+          if (!klados) return { error: { message: 'Not found' } };
+          return { data: { id, type: 'klados', ...klados } };
+        }
+        if (path.includes('/entities/')) {
+          const id = options.params.path.id;
+          const entity = state.entities.get(id);
+          if (!entity) return { error: { message: 'Not found' } };
+          return { data: { id, ...entity } };
+        }
+        // Handle tip requests
       },
       POST: async (path, options) => {
-        // Track in state.created or state.invoked
+        if (path.includes('/kladoi/') && path.includes('/invoke')) {
+          const kladosId = options.params.path.id;
+          state.invoked.push({ kladosId, request: options.body });
+          return { data: { accepted: true, job_id: options.body.job_id } };
+        }
+        if (path === '/entities') {
+          state.created.push(options.body);
+          return { data: { id: `mock_${Date.now()}`, ...options.body } };
+        }
       },
       PUT: async (path, options) => {
-        // Track in state.updated, handle CAS errors
+        if (config.errors?.onUpdate && state.updateAttempts < config.errors.onUpdate) {
+          state.updateAttempts++;
+          throw new Error('409 Conflict');
+        }
+        const id = options.params.path.id;
+        state.updated.push({ id, properties: options.body.properties });
+        return { data: { id } };
       },
     },
 
@@ -234,74 +333,130 @@ function createMockClient(config: MockClientConfig): MockArkeClient {
 ### Fixtures
 
 ```typescript
-// src/__tests__/fixtures/rhizai/linear.ts
-export const linearRhiza: Rhiza = {
-  id: 'test-linear',
-  name: 'Linear Test',
-  version: '1.0',
-  entry: 'step-a',
-  kladoi: {
-    'step-a': {
-      action: 'agent-a',
-      accepts: { types: ['*'], cardinality: 'one' },
-      produces: { types: ['*'], cardinality: 'one' },
-      then: { pass: 'step-b' },
-    },
-    'step-b': {
-      action: 'agent-b',
-      accepts: { types: ['*'], cardinality: 'one' },
-      produces: { types: ['*'], cardinality: 'one' },
-      then: { done: true },
-    },
-  },
-};
+// src/__tests__/fixtures/kladoi/index.ts
 
-// src/__tests__/fixtures/rhizai/scatter-gather.ts
-export const scatterGatherRhiza: Rhiza = {
-  id: 'test-scatter-gather',
-  name: 'Scatter Gather Test',
-  version: '1.0',
-  entry: 'producer',
-  kladoi: {
-    'producer': {
-      action: 'agent-producer',
+export const mockKladoi: Record<string, { properties: KladosProperties; cid: string }> = {
+  'II01klados_producer': {
+    properties: {
+      label: 'Producer',
+      endpoint: 'https://producer.test',
+      actions_required: ['file:view'],
       accepts: { types: ['*'], cardinality: 'one' },
       produces: { types: ['item/*'], cardinality: 'many' },
-      then: { scatter: 'worker' },
+      status: 'active',
+      created_at: '2025-01-01T00:00:00Z',
+      updated_at: '2025-01-01T00:00:00Z',
     },
-    'worker': {
-      action: 'agent-worker',
+    cid: 'cid_producer',
+  },
+  'II01klados_worker': {
+    properties: {
+      label: 'Worker',
+      endpoint: 'https://worker.test',
+      actions_required: ['file:view', 'entity:update'],
       accepts: { types: ['item/*'], cardinality: 'one' },
       produces: { types: ['result/*'], cardinality: 'one' },
-      then: { gather: 'aggregator' },
+      status: 'active',
+      created_at: '2025-01-01T00:00:00Z',
+      updated_at: '2025-01-01T00:00:00Z',
     },
-    'aggregator': {
-      action: 'agent-aggregator',
+    cid: 'cid_worker',
+  },
+  'II01klados_aggregator': {
+    properties: {
+      label: 'Aggregator',
+      endpoint: 'https://aggregator.test',
+      actions_required: ['file:create'],
       accepts: { types: ['result/*'], cardinality: 'many' },
       produces: { types: ['final/*'], cardinality: 'one' },
-      then: { done: true },
+      status: 'active',
+      created_at: '2025-01-01T00:00:00Z',
+      updated_at: '2025-01-01T00:00:00Z',
     },
+    cid: 'cid_aggregator',
   },
 };
+```
 
-// src/__tests__/fixtures/rhizai/invalid.ts
-export const missingEntryRhiza: Rhiza = {
-  id: 'test-missing-entry',
-  name: 'Missing Entry',
+```typescript
+// src/__tests__/fixtures/rhizai/linear.ts
+
+import { mockKladoi } from '../kladoi';
+
+export const linearFlow = {
+  'II01klados_a': { then: { pass: 'II01klados_b' } },
+  'II01klados_b': { then: { done: true } },
+};
+
+export const linearRhizaProperties = {
+  label: 'Linear Test',
   version: '1.0',
-  entry: 'does-not-exist',
-  kladoi: {
-    'step-a': { /* ... */ },
+  entry: 'II01klados_a',
+  flow: linearFlow,
+  status: 'active' as const,
+};
+```
+
+```typescript
+// src/__tests__/fixtures/rhizai/scatter-gather.ts
+
+export const scatterGatherFlow = {
+  'II01klados_producer': { then: { scatter: 'II01klados_worker' } },
+  'II01klados_worker': { then: { gather: 'II01klados_aggregator' } },
+  'II01klados_aggregator': { then: { done: true } },
+};
+
+export const scatterGatherRhizaProperties = {
+  label: 'Scatter Gather Test',
+  version: '1.0',
+  entry: 'II01klados_producer',
+  flow: scatterGatherFlow,
+  status: 'active' as const,
+};
+```
+
+```typescript
+// src/__tests__/fixtures/rhizai/invalid.ts
+
+export const missingEntryRhiza = {
+  label: 'Missing Entry',
+  version: '1.0',
+  entry: 'does_not_exist',
+  flow: {
+    'II01klados_a': { then: { done: true } },
   },
 };
 
+export const cycleRhiza = {
+  label: 'Cycle',
+  version: '1.0',
+  entry: 'II01klados_a',
+  flow: {
+    'II01klados_a': { then: { pass: 'II01klados_b' } },
+    'II01klados_b': { then: { pass: 'II01klados_a' } }, // Cycle!
+  },
+};
+
+export const noTerminalRhiza = {
+  label: 'No Terminal',
+  version: '1.0',
+  entry: 'II01klados_a',
+  flow: {
+    'II01klados_a': { then: { pass: 'II01klados_b' } },
+    'II01klados_b': { then: { pass: 'II01klados_a' } },
+  },
+};
+```
+
+```typescript
 // src/__tests__/fixtures/logs/partial-error.ts
+
 export const partialErrorLogs: KladosLogEntry[] = [
   {
     id: 'log-root',
     type: 'klados_log',
-    rhiza_id: 'test-rhiza',
-    klados: 'producer',
+    rhiza_id: 'II01rhiza_test',
+    klados_id: 'II01klados_producer',
     job_id: 'job-1',
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
@@ -310,7 +465,7 @@ export const partialErrorLogs: KladosLogEntry[] = [
     produced: { entity_ids: ['item-1', 'item-2', 'item-3'] },
     handoffs: [{
       type: 'scatter',
-      target: 'worker',
+      target: 'II01klados_worker',
       target_type: 'klados',
       batch_id: 'batch-1',
       invocations: [
@@ -323,8 +478,8 @@ export const partialErrorLogs: KladosLogEntry[] = [
   {
     id: 'log-worker-0',
     type: 'klados_log',
-    rhiza_id: 'test-rhiza',
-    klados: 'worker',
+    rhiza_id: 'II01rhiza_test',
+    klados_id: 'II01klados_worker',
     job_id: 'job-2',
     status: 'done',
     started_at: '2025-01-01T00:01:00Z',
@@ -335,8 +490,8 @@ export const partialErrorLogs: KladosLogEntry[] = [
   {
     id: 'log-worker-1',
     type: 'klados_log',
-    rhiza_id: 'test-rhiza',
-    klados: 'worker',
+    rhiza_id: 'II01rhiza_test',
+    klados_id: 'II01klados_worker',
     job_id: 'job-3',
     status: 'error',
     started_at: '2025-01-01T00:01:00Z',
@@ -347,8 +502,8 @@ export const partialErrorLogs: KladosLogEntry[] = [
   {
     id: 'log-worker-2',
     type: 'klados_log',
-    rhiza_id: 'test-rhiza',
-    klados: 'worker',
+    rhiza_id: 'II01rhiza_test',
+    klados_id: 'II01klados_worker',
     job_id: 'job-4',
     status: 'done',
     started_at: '2025-01-01T00:01:00Z',
@@ -394,7 +549,23 @@ afterAll(async () => {
 
 ### What We Test
 
-#### 2.1 Rhiza CRUD (API)
+#### 2.1 Klados CRUD (API)
+
+```typescript
+// src/__tests__/integration/klados-crud.test.ts
+
+describe('Klados CRUD', () => {
+  it('creates a klados entity');
+  it('gets a klados by ID');
+  it('updates a klados');
+  it('validates klados on create');
+  it('validates klados on update');
+  it('rejects activation of invalid klados');
+  it('soft deletes a klados');
+});
+```
+
+#### 2.2 Rhiza CRUD (API)
 
 ```typescript
 // src/__tests__/integration/rhiza-crud.test.ts
@@ -405,11 +576,45 @@ describe('Rhiza CRUD', () => {
   it('updates a rhiza');
   it('validates rhiza on create');
   it('validates rhiza on update');
-  it('rejects activation of invalid rhiza');
+  it('rejects activation of rhiza with invalid flow');
+  it('soft deletes a rhiza');
 });
 ```
 
-#### 2.2 Batch Entity (API)
+#### 2.3 Klados Invocation (API)
+
+```typescript
+// src/__tests__/integration/klados-invoke.test.ts
+
+describe('Klados Invocation', () => {
+  it('invokes klados and returns job_id');
+  it('grants permissions to klados');
+  it('creates job collection for standalone invocation');
+  it('uses provided job_collection when given');
+  it('passes rhiza_context when provided');
+  it('passes batch_context when provided');
+  it('rejects invocation of inactive klados');
+});
+```
+
+#### 2.4 Rhiza Invocation (API)
+
+```typescript
+// src/__tests__/integration/rhiza-invoke.test.ts
+
+describe('Rhiza Invocation', () => {
+  it('invokes rhiza and returns job_id');
+  it('performs runtime validation of all kladoi');
+  it('grants permissions to all workflow kladoi');
+  it('creates job collection');
+  it('invokes entry klados with rhiza context');
+  it('rejects invocation of inactive rhiza');
+  it('rejects when klados not found');
+  it('rejects when klados not active');
+});
+```
+
+#### 2.5 Batch Entity (API)
 
 ```typescript
 // src/__tests__/integration/batch.test.ts
@@ -419,10 +624,11 @@ describe('Batch Entity', () => {
   it('updates batch slots atomically');
   it('handles concurrent slot updates (CAS)');
   it('marks batch complete when all slots done');
+  it('marks batch error when slot errors');
 });
 ```
 
-#### 2.3 Log Chain (API)
+#### 2.6 Log Chain (API)
 
 ```typescript
 // src/__tests__/integration/log-chain.test.ts
@@ -435,47 +641,31 @@ describe('Log Chain', () => {
 });
 ```
 
-#### 2.4 Simple Workflow Invocation (API + Test Agents)
+### Test Kladoi
+
+For integration tests, we need simple test kladoi deployed:
 
 ```typescript
-// src/__tests__/integration/invoke.test.ts
-
-describe('Workflow Invocation', () => {
-  // Requires test agents deployed
-  it('invokes rhiza and returns job_id');
-  it('grants permissions to all workflow agents');
-  it('creates job collection');
-  it('entry agent receives RhizaContext');
-});
-```
-
-### Test Agents
-
-For integration tests, we need simple test agents:
-
-```typescript
-// Test agent: echo-agent
+// Test klados: echo-klados
 // Simply returns its input as output
 // Writes a log entry
 // Interprets "then" and hands off
 
-// Test agent: error-agent
+// Test klados: error-klados
 // Always fails with retryable error
 // For testing resume
 
-// Test agent: delay-agent
+// Test klados: delay-klados
 // Waits N seconds before completing
 // For testing concurrent operations
 ```
-
-These can be deployed to test environment as part of the test setup.
 
 ---
 
 ## Phase 3: End-to-End Tests
 
 ### Goal
-Full workflow execution with real agents.
+Full workflow execution with real kladoi.
 
 ### What We Test
 
@@ -501,6 +691,12 @@ describe('Conditional Workflow', () => {
   it('routes text to text-handler');
 });
 
+describe('Sub-Workflow', () => {
+  it('invokes sub-rhiza');
+  it('sub-rhiza creates its own job collection');
+  it('sub-rhiza calls back to parent on completion');
+});
+
 describe('Resume', () => {
   it('resumes after worker failure');
   it('continues from last successful point');
@@ -510,12 +706,12 @@ describe('Resume', () => {
 
 ### TBD (Later Phases)
 
-- [ ] Nested rhiza (sub-workflow invocation)
 - [ ] Batch with mixed success/error
 - [ ] CAS retry under high concurrency
 - [ ] Permission expiry handling
 - [ ] Large batch (100+ items)
 - [ ] Deep nesting (5+ levels)
+- [ ] Multiple sub-rhizai in parallel
 
 ---
 
@@ -525,30 +721,40 @@ describe('Resume', () => {
 src/
 ├── __tests__/
 │   ├── unit/                    # Phase 1: Mocks
-│   │   ├── validation.test.ts
-│   │   ├── route.test.ts
-│   │   ├── scatter.test.ts
-│   │   ├── gather.test.ts
+│   │   ├── validation/
+│   │   │   ├── klados.test.ts
+│   │   │   ├── rhiza.test.ts
+│   │   │   └── runtime.test.ts
+│   │   ├── handoff/
+│   │   │   ├── interpret.test.ts
+│   │   │   ├── scatter.test.ts
+│   │   │   ├── gather.test.ts
+│   │   │   └── route.test.ts
 │   │   ├── traverse.test.ts
 │   │   ├── resume.test.ts
 │   │   └── status.test.ts
 │   │
 │   ├── integration/             # Phase 2: Test Network
 │   │   ├── setup.ts
+│   │   ├── klados-crud.test.ts
 │   │   ├── rhiza-crud.test.ts
+│   │   ├── klados-invoke.test.ts
+│   │   ├── rhiza-invoke.test.ts
 │   │   ├── batch.test.ts
-│   │   ├── log-chain.test.ts
-│   │   └── invoke.test.ts
+│   │   └── log-chain.test.ts
 │   │
 │   ├── e2e/                     # Phase 3: Full Workflows
 │   │   ├── setup.ts
 │   │   ├── linear.test.ts
 │   │   ├── scatter-gather.test.ts
 │   │   ├── conditional.test.ts
+│   │   ├── sub-workflow.test.ts
 │   │   └── resume.test.ts
 │   │
 │   └── fixtures/
 │       ├── mock-client.ts
+│       ├── kladoi/
+│       │   └── index.ts
 │       ├── rhizai/
 │       │   ├── linear.ts
 │       │   ├── scatter-gather.ts
@@ -583,52 +789,70 @@ src/
 ### Step 1: Set up test infrastructure
 - [ ] Create test directory structure
 - [ ] Create mock client
+- [ ] Create fixture kladoi
 - [ ] Create fixture rhizai (linear, scatter-gather, invalid)
 - [ ] Create fixture logs (success, partial-error)
 
-### Step 2: Validation tests + implementation
-- [ ] Write validation tests
-- [ ] Implement `validateRhiza()`
-- [ ] All validation tests pass
+### Step 2: Klados validation tests + implementation
+- [ ] Write klados validation tests
+- [ ] Implement `validateKladosProperties()`
+- [ ] All klados validation tests pass
 
-### Step 3: Route tests + implementation
+### Step 3: Rhiza validation tests + implementation
+- [ ] Write rhiza validation tests
+- [ ] Implement `validateRhizaProperties()`
+- [ ] All rhiza validation tests pass
+
+### Step 4: Runtime validation tests + implementation
+- [ ] Write runtime validation tests
+- [ ] Implement `validateRhizaRuntime()`
+- [ ] All runtime validation tests pass
+
+### Step 5: Route tests + implementation
 - [ ] Write route matching tests
 - [ ] Implement `evaluateWhere()`, `matchRoute()`
 - [ ] All route tests pass
 
-### Step 4: Scatter/Gather tests + implementation
+### Step 6: Scatter/Gather tests + implementation
 - [ ] Write scatter tests
 - [ ] Write gather tests
 - [ ] Implement `findGatherTarget()`, `createScatter()`, `completeBatchSlot()`
 - [ ] All scatter/gather tests pass
 
-### Step 5: Log chain tests + implementation
+### Step 7: Handoff interpretation tests + implementation
+- [ ] Write interpret tests
+- [ ] Implement `interpretThen()`
+- [ ] All interpret tests pass
+
+### Step 8: Log chain tests + implementation
 - [ ] Write traverse tests
 - [ ] Implement log chain functions
 - [ ] All traverse tests pass
 
-### Step 6: Resume tests + implementation
+### Step 9: Resume tests + implementation
 - [ ] Write resume tests
 - [ ] Implement `findErrorLeaves()`, `resumeWorkflow()`
 - [ ] All resume tests pass
 
-### Step 7: Status tests + implementation
+### Step 10: Status tests + implementation
 - [ ] Write status tests
 - [ ] Implement `buildStatusFromLogs()`
 - [ ] All status tests pass
 
-### Step 8: API changes (parallel with above)
+### Step 11: API changes (parallel with above)
+- [ ] Add klados profile to arke_v1
 - [ ] Add rhiza profile to arke_v1
+- [ ] Add /kladoi routes
 - [ ] Add /rhizai routes
 - [ ] Deploy to test environment
 
-### Step 9: Integration tests
+### Step 12: Integration tests
 - [ ] Write integration tests
+- [ ] Deploy test kladoi
 - [ ] Run against test network
 - [ ] All integration tests pass
 
-### Step 10: E2E tests
-- [ ] Deploy test agents
+### Step 13: E2E tests
 - [ ] Write e2e tests
 - [ ] Run full workflow tests
 - [ ] All e2e tests pass
