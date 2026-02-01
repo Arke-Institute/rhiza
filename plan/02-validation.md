@@ -6,7 +6,7 @@ The validation module ensures rhiza and klados definitions are well-formed befor
 
 Since kladoi are now first-class entities, validation happens at two levels:
 1. **Static validation** - At definition time (rhiza flow structure)
-2. **Runtime validation** - At invoke time (klados compatibility)
+2. **Runtime validation** - At invoke time (klados compatibility, target resolution)
 
 ---
 
@@ -33,20 +33,20 @@ When creating or updating a rhiza entity.
 
 | Rule | Description | Error Code |
 |------|-------------|------------|
-| Entry exists | Entry must be a valid klados ID in `flow` | `MISSING_ENTRY` |
-| Flow references entry | `flow` must include the `entry` klados | `ENTRY_NOT_IN_FLOW` |
-| Valid targets | All `then` targets must be valid klados IDs or rhiza IDs | `INVALID_TARGET` |
-| Has terminal | At least one flow step must have `then: { done: true }` | `NO_TERMINAL` |
-| No unreachable | All kladoi in flow must be reachable from entry | `UNREACHABLE_KLADOS` (warning) |
-| No cycles | Flow graph must be acyclic (for non-batch paths) | `CYCLE_DETECTED` |
+| Entry exists | Entry must be a valid ID in `flow` | `MISSING_ENTRY` |
+| Flow references entry | `flow` must include the `entry` ID | `ENTRY_NOT_IN_FLOW` |
+| Valid targets | All `pass`, `scatter`, `gather` targets and route targets must be valid IDs | `INVALID_TARGET` |
+| All paths terminate | Every possible path must end in `done: true` or target a rhiza | `UNTERMINATED_PATH` |
+| No cycles | Flow graph must not contain cycles (detected during path traversal) | `CYCLE_DETECTED` |
+| No unreachable | All IDs in flow must be reachable from entry | `UNREACHABLE_KLADOS` (warning) |
 
 ### Flow Syntax Validation
 
 | Rule | Description | Error Code |
 |------|-------------|------------|
-| Valid handoff type | `then` must be: done, pass, scatter, gather, route, or rhiza | `INVALID_HANDOFF` |
-| Route has rules | `route` must have at least one rule | `EMPTY_ROUTE` |
-| Route rules valid | Each rule must have `where` and `then` | `INVALID_ROUTE_RULE` |
+| Valid handoff type | `then` must be: `done`, `pass`, `scatter`, or `gather` | `INVALID_HANDOFF` |
+| Route rules valid | Each rule in optional `route` array must have `where` and `target` | `INVALID_ROUTE_RULE` |
+| Where condition valid | `where` must be a valid `WhereCondition` (equals, and, or) | `INVALID_WHERE_CONDITION` |
 
 ---
 
@@ -54,24 +54,24 @@ When creating or updating a rhiza entity.
 
 When invoking a rhiza, the API validates:
 
-### Klados Existence
+### Target Resolution
 
-All klados IDs in the flow must exist and be accessible.
+All target IDs in the flow must resolve to existing klados or rhiza entities.
 
 | Rule | Description | Error Code |
 |------|-------------|------------|
 | Entry exists | Entry klados entity must exist | `ENTRY_KLADOS_NOT_FOUND` |
-| All exist | All kladoi referenced in flow must exist | `KLADOS_NOT_FOUND` |
+| All targets exist | All targets referenced in flow must exist (klados or rhiza) | `TARGET_NOT_FOUND` |
 | All active | All kladoi must have `status: 'active'` | `KLADOS_NOT_ACTIVE` |
 
 ### Cardinality Compatibility
 
 | Rule | Description | Error Code |
 |------|-------------|------------|
-| Scatter produces many | Klados before `scatter` must have `produces.cardinality: 'many'` | `SCATTER_PRODUCES_ONE` |
-| Scatter target accepts one | Target of `scatter` must have `accepts.cardinality: 'one'` | `SCATTER_TARGET_MANY` |
-| Gather target accepts many | Target of `gather` must have `accepts.cardinality: 'many'` | `GATHER_TARGET_ONE` |
-| Pass compatible | For `pass`, cardinalities should match (warning) | `CARDINALITY_MISMATCH` |
+| Scatter producer | Klados using `scatter` must have `produces.cardinality: 'many'` | `PRODUCER_CARDINALITY_MISMATCH` |
+| Scatter target | Target of `scatter` must have `accepts.cardinality: 'one'` | `TARGET_CARDINALITY_MISMATCH` |
+| Gather target | Target of `gather` must have `accepts.cardinality: 'many'` | `TARGET_CARDINALITY_MISMATCH` |
+| Pass compatible | For `pass`, cardinalities should match | `CARDINALITY_MISMATCH` (warning) |
 
 ### Type Compatibility (Warning Only)
 
@@ -200,7 +200,7 @@ export function validateKladosProperties(
 ### `src/validation/validate-rhiza.ts`
 
 ```typescript
-import type { RhizaEntity, RhizaProperties, FlowStep, ThenSpec } from '../types';
+import type { RhizaProperties, FlowStep, ThenSpec, RouteRule, WhereCondition } from '../types';
 
 export interface ValidationResult {
   valid: boolean;
@@ -226,7 +226,7 @@ export interface ValidationWarning {
  * Validate rhiza properties (static validation)
  *
  * This validates the structure of the rhiza definition.
- * It does NOT validate that kladoi actually exist (that's runtime).
+ * It does NOT validate that targets actually exist (that's runtime).
  */
 export function validateRhizaProperties(
   properties: Partial<RhizaProperties>
@@ -267,20 +267,18 @@ export function validateRhizaProperties(
     validateFlowStep(kladosId, step, properties.flow, errors, warnings);
   }
 
-  // Check for at least one terminal
-  const hasTerminal = Object.values(properties.flow).some(
-    (step) => step.then && 'done' in step.then && step.then.done
-  );
-  if (!hasTerminal) {
-    errors.push({
-      code: 'NO_TERMINAL',
-      message: 'Rhiza must have at least one terminal step (then: { done: true })',
-    });
+  // Check all paths terminate (also detects cycles)
+  if (properties.entry && properties.flow[properties.entry]) {
+    const terminationResult = validateAllPathsTerminate(
+      properties.entry,
+      properties.flow
+    );
+    errors.push(...terminationResult.errors);
   }
 
   // Check for unreachable kladoi
   if (properties.entry && properties.flow[properties.entry]) {
-    const reachable = findReachableKladoi(properties.entry, properties.flow);
+    const reachable = findReachableIds(properties.entry, properties.flow);
     for (const kladosId of Object.keys(properties.flow)) {
       if (!reachable.has(kladosId)) {
         warnings.push({
@@ -289,17 +287,6 @@ export function validateRhizaProperties(
           klados_id: kladosId,
         });
       }
-    }
-  }
-
-  // Check for cycles
-  if (properties.entry) {
-    const cycles = detectCycles(properties.entry, properties.flow);
-    for (const cycle of cycles) {
-      errors.push({
-        code: 'CYCLE_DETECTED',
-        message: `Cycle detected: ${cycle.join(' → ')}`,
-      });
     }
   }
 
@@ -333,7 +320,7 @@ function validateFlowStep(
 }
 
 /**
- * Validate a then spec (recursive for routes)
+ * Validate a then spec
  */
 function validateThen(
   kladosId: string,
@@ -349,52 +336,24 @@ function validateThen(
 
   if ('pass' in then) {
     validateTarget(kladosId, 'pass', then.pass, flow, errors);
+    if (then.route) {
+      validateRouteRules(kladosId, then.route, flow, errors, warnings);
+    }
     return;
   }
 
   if ('scatter' in then) {
     validateTarget(kladosId, 'scatter', then.scatter, flow, errors);
+    if (then.route) {
+      validateRouteRules(kladosId, then.route, flow, errors, warnings);
+    }
     return;
   }
 
   if ('gather' in then) {
     validateTarget(kladosId, 'gather', then.gather, flow, errors);
-    return;
-  }
-
-  if ('rhiza' in then) {
-    // Sub-rhiza reference - valid ID format check only
-    if (!then.rhiza || typeof then.rhiza !== 'string') {
-      errors.push({
-        code: 'INVALID_RHIZA_REF',
-        message: `Invalid rhiza reference in '${kladosId}'`,
-        klados_id: kladosId,
-      });
-    }
-    return;
-  }
-
-  if ('route' in then) {
-    if (!then.route || then.route.length === 0) {
-      errors.push({
-        code: 'EMPTY_ROUTE',
-        message: `Route in '${kladosId}' has no rules`,
-        klados_id: kladosId,
-      });
-      return;
-    }
-
-    for (const rule of then.route) {
-      if (!rule.where || !rule.then) {
-        errors.push({
-          code: 'INVALID_ROUTE_RULE',
-          message: `Route rule in '${kladosId}' is missing 'where' or 'then'`,
-          klados_id: kladosId,
-        });
-        continue;
-      }
-      // Recursively validate the rule's then
-      validateThen(kladosId, rule.then, flow, errors, warnings);
+    if (then.route) {
+      validateRouteRules(kladosId, then.route, flow, errors, warnings);
     }
     return;
   }
@@ -407,10 +366,112 @@ function validateThen(
 }
 
 /**
+ * Validate route rules on a handoff
+ */
+function validateRouteRules(
+  kladosId: string,
+  routes: RouteRule[],
+  flow: Record<string, FlowStep>,
+  errors: ValidationError[],
+  warnings: ValidationWarning[]
+): void {
+  for (let i = 0; i < routes.length; i++) {
+    const rule = routes[i];
+
+    if (!rule.where) {
+      errors.push({
+        code: 'INVALID_ROUTE_RULE',
+        message: `Route rule ${i} in '${kladosId}' is missing 'where' condition`,
+        klados_id: kladosId,
+      });
+    } else {
+      validateWhereCondition(kladosId, rule.where, i, errors);
+    }
+
+    if (!rule.target) {
+      errors.push({
+        code: 'INVALID_ROUTE_RULE',
+        message: `Route rule ${i} in '${kladosId}' is missing 'target'`,
+        klados_id: kladosId,
+      });
+    } else {
+      // Target can be in flow or external (rhiza) - validate format only
+      if (typeof rule.target !== 'string') {
+        errors.push({
+          code: 'INVALID_TARGET',
+          message: `Route rule ${i} target in '${kladosId}' must be a string ID`,
+          klados_id: kladosId,
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Validate a where condition (recursive for AND/OR)
+ */
+function validateWhereCondition(
+  kladosId: string,
+  where: WhereCondition,
+  ruleIndex: number,
+  errors: ValidationError[]
+): void {
+  if ('property' in where && 'equals' in where) {
+    // WhereEquals - valid
+    if (typeof where.property !== 'string') {
+      errors.push({
+        code: 'INVALID_WHERE_CONDITION',
+        message: `Route rule ${ruleIndex} in '${kladosId}': 'property' must be a string`,
+        klados_id: kladosId,
+      });
+    }
+    return;
+  }
+
+  if ('and' in where) {
+    // WhereAnd
+    if (!Array.isArray(where.and) || where.and.length === 0) {
+      errors.push({
+        code: 'INVALID_WHERE_CONDITION',
+        message: `Route rule ${ruleIndex} in '${kladosId}': 'and' must be a non-empty array`,
+        klados_id: kladosId,
+      });
+      return;
+    }
+    for (const condition of where.and) {
+      validateWhereCondition(kladosId, condition, ruleIndex, errors);
+    }
+    return;
+  }
+
+  if ('or' in where) {
+    // WhereOr
+    if (!Array.isArray(where.or) || where.or.length === 0) {
+      errors.push({
+        code: 'INVALID_WHERE_CONDITION',
+        message: `Route rule ${ruleIndex} in '${kladosId}': 'or' must be a non-empty array`,
+        klados_id: kladosId,
+      });
+      return;
+    }
+    for (const condition of where.or) {
+      validateWhereCondition(kladosId, condition, ruleIndex, errors);
+    }
+    return;
+  }
+
+  errors.push({
+    code: 'INVALID_WHERE_CONDITION',
+    message: `Route rule ${ruleIndex} in '${kladosId}': invalid where condition format`,
+    klados_id: kladosId,
+  });
+}
+
+/**
  * Validate a target reference
  *
- * Note: This only validates that the target is in the flow.
- * It does NOT validate that the klados entity actually exists.
+ * Note: This only validates that the target is in the flow for static validation.
+ * External targets (rhiza IDs) are validated at runtime.
  */
 function validateTarget(
   sourceKladosId: string,
@@ -429,7 +490,8 @@ function validateTarget(
     return;
   }
 
-  // Target must be in flow (it's a klados ID)
+  // Target must be in flow (for static validation)
+  // At runtime, targets not in flow are resolved as rhiza IDs
   if (!flow[target]) {
     errors.push({
       code: 'INVALID_TARGET',
@@ -441,9 +503,115 @@ function validateTarget(
 }
 
 /**
- * Find all kladoi reachable from entry
+ * Validate all paths terminate
+ *
+ * Traverses all possible paths from entry and ensures each ends in:
+ * - done: true (terminal)
+ * - A target not in flow (assumed to be a rhiza, validated at runtime)
+ *
+ * Also detects cycles during traversal.
  */
-function findReachableKladoi(
+function validateAllPathsTerminate(
+  entry: string,
+  flow: Record<string, FlowStep>
+): { errors: ValidationError[] } {
+  const errors: ValidationError[] = [];
+
+  function traverse(current: string, path: string[]): void {
+    // Cycle detection
+    if (path.includes(current)) {
+      const cycleStart = path.indexOf(current);
+      const cycle = [...path.slice(cycleStart), current];
+      errors.push({
+        code: 'CYCLE_DETECTED',
+        message: `Cycle detected: ${cycle.join(' -> ')}`,
+      });
+      return;
+    }
+
+    const step = flow[current];
+    if (!step || !step.then) {
+      // Not in flow - assumed to be rhiza target (valid termination)
+      return;
+    }
+
+    const then = step.then;
+    const newPath = [...path, current];
+
+    if ('done' in then) {
+      // Terminal - valid
+      return;
+    }
+
+    // Get all possible targets (including route alternatives)
+    const targets = extractAllTargets(then);
+
+    if (targets.length === 0) {
+      errors.push({
+        code: 'UNTERMINATED_PATH',
+        message: `Path ending at '${current}' has no valid target`,
+        klados_id: current,
+      });
+      return;
+    }
+
+    for (const target of targets) {
+      if (!flow[target]) {
+        // Target not in flow - assumed to be rhiza (valid termination)
+        continue;
+      }
+      traverse(target, newPath);
+    }
+  }
+
+  traverse(entry, []);
+  return { errors };
+}
+
+/**
+ * Extract all possible targets from a ThenSpec (including route alternatives)
+ */
+function extractAllTargets(then: ThenSpec): string[] {
+  const targets: string[] = [];
+
+  if ('done' in then) {
+    return [];
+  }
+
+  if ('pass' in then) {
+    targets.push(then.pass);
+    if (then.route) {
+      for (const rule of then.route) {
+        if (rule.target) targets.push(rule.target);
+      }
+    }
+  }
+
+  if ('scatter' in then) {
+    targets.push(then.scatter);
+    if (then.route) {
+      for (const rule of then.route) {
+        if (rule.target) targets.push(rule.target);
+      }
+    }
+  }
+
+  if ('gather' in then) {
+    targets.push(then.gather);
+    if (then.route) {
+      for (const rule of then.route) {
+        if (rule.target) targets.push(rule.target);
+      }
+    }
+  }
+
+  return targets;
+}
+
+/**
+ * Find all IDs reachable from entry
+ */
+function findReachableIds(
   entry: string,
   flow: Record<string, FlowStep>
 ): Set<string> {
@@ -456,11 +624,11 @@ function findReachableKladoi(
     reachable.add(current);
 
     const step = flow[current];
-    if (!step) continue;
+    if (!step || !step.then) continue;
 
-    const targets = extractTargets(step.then);
+    const targets = extractAllTargets(step.then);
     for (const target of targets) {
-      if (!reachable.has(target)) {
+      if (!reachable.has(target) && flow[target]) {
         queue.push(target);
       }
     }
@@ -468,73 +636,20 @@ function findReachableKladoi(
 
   return reachable;
 }
-
-/**
- * Extract all target klados IDs from a ThenSpec
- */
-function extractTargets(then: ThenSpec): string[] {
-  if (!then) return [];
-  if ('done' in then) return [];
-  if ('pass' in then) return [then.pass];
-  if ('scatter' in then) return [then.scatter];
-  if ('gather' in then) return [then.gather];
-  if ('rhiza' in then) return []; // Sub-rhiza, not a local target
-  if ('route' in then) {
-    return then.route.flatMap((rule) => extractTargets(rule.then));
-  }
-  return [];
-}
-
-/**
- * Detect cycles in the flow graph
- * Only considers non-scatter paths (scatter→gather is not a cycle)
- */
-function detectCycles(
-  entry: string,
-  flow: Record<string, FlowStep>
-): string[][] {
-  const cycles: string[][] = [];
-  const visited = new Set<string>();
-  const path: string[] = [];
-
-  function dfs(current: string): void {
-    if (path.includes(current)) {
-      const cycleStart = path.indexOf(current);
-      cycles.push([...path.slice(cycleStart), current]);
-      return;
-    }
-
-    if (visited.has(current)) return;
-    visited.add(current);
-    path.push(current);
-
-    const step = flow[current];
-    if (step?.then && !('scatter' in step.then) && !('done' in step.then)) {
-      const targets = extractTargets(step.then);
-      for (const target of targets) {
-        dfs(target);
-      }
-    }
-
-    path.pop();
-  }
-
-  dfs(entry);
-  return cycles;
-}
 ```
 
 ### `src/validation/validate-runtime.ts`
 
 ```typescript
 import type { ArkeClient } from '@arke-institute/sdk';
-import type { KladosEntity, RhizaProperties, FlowStep, ThenSpec } from '../types';
+import type { KladosEntity, RhizaEntity, RhizaProperties, FlowStep, ThenSpec } from '../types';
 
 export interface RuntimeValidationResult {
   valid: boolean;
   errors: ValidationError[];
   warnings: ValidationWarning[];
   kladoi: Map<string, KladosEntity>;
+  rhizai: Map<string, RhizaEntity>;
 }
 
 export interface ValidationError {
@@ -552,8 +667,8 @@ export interface ValidationWarning {
 /**
  * Validate a rhiza at runtime
  *
- * This loads all kladoi and validates:
- * 1. All kladoi exist and are active
+ * This loads all targets and validates:
+ * 1. All targets exist (as klados or rhiza) and are active
  * 2. Cardinality compatibility
  * 3. Type compatibility (warnings)
  */
@@ -564,50 +679,35 @@ export async function validateRhizaRuntime(
   const errors: ValidationError[] = [];
   const warnings: ValidationWarning[] = [];
   const kladoi = new Map<string, KladosEntity>();
+  const rhizai = new Map<string, RhizaEntity>();
 
-  // Collect all klados IDs from flow
-  const kladosIds = new Set<string>(Object.keys(properties.flow));
+  // Collect all target IDs from flow
+  const targetIds = new Set<string>(Object.keys(properties.flow));
 
-  // Load all kladoi
-  for (const kladosId of kladosIds) {
-    try {
-      const { data: klados } = await client.api.GET('/kladoi/{id}', {
-        params: { path: { id: kladosId } },
-      });
-
-      if (!klados) {
-        errors.push({
-          code: 'KLADOS_NOT_FOUND',
-          message: `Klados '${kladosId}' not found`,
-          klados_id: kladosId,
-        });
-        continue;
-      }
-
-      if (klados.properties.status !== 'active') {
-        errors.push({
-          code: 'KLADOS_NOT_ACTIVE',
-          message: `Klados '${kladosId}' is not active (status: ${klados.properties.status})`,
-          klados_id: kladosId,
-        });
-      }
-
-      kladoi.set(kladosId, klados as KladosEntity);
-    } catch (e) {
-      errors.push({
-        code: 'KLADOS_NOT_FOUND',
-        message: `Failed to load klados '${kladosId}': ${e instanceof Error ? e.message : 'Unknown error'}`,
-        klados_id: kladosId,
-      });
+  // Also collect route targets
+  for (const step of Object.values(properties.flow)) {
+    const routeTargets = extractRouteTargets(step.then);
+    for (const target of routeTargets) {
+      targetIds.add(target);
     }
   }
 
-  // Skip cardinality/type validation if we're missing kladoi
-  if (errors.length > 0) {
-    return { valid: false, errors, warnings, kladoi };
+  // Load all targets (try as klados first, then as rhiza)
+  for (const targetId of targetIds) {
+    const resolved = await resolveTarget(client, targetId, errors);
+    if (resolved?.type === 'klados') {
+      kladoi.set(targetId, resolved.entity as KladosEntity);
+    } else if (resolved?.type === 'rhiza') {
+      rhizai.set(targetId, resolved.entity as RhizaEntity);
+    }
   }
 
-  // Validate cardinality compatibility
+  // Skip cardinality/type validation if we're missing targets
+  if (errors.length > 0) {
+    return { valid: false, errors, warnings, kladoi, rhizai };
+  }
+
+  // Validate cardinality compatibility (only for klados targets)
   for (const [kladosId, step] of Object.entries(properties.flow)) {
     validateCardinalityRuntime(kladosId, step.then, kladoi, errors, warnings);
   }
@@ -617,7 +717,83 @@ export async function validateRhizaRuntime(
     errors,
     warnings,
     kladoi,
+    rhizai,
   };
+}
+
+/**
+ * Resolve a target ID to klados or rhiza
+ */
+async function resolveTarget(
+  client: ArkeClient,
+  targetId: string,
+  errors: ValidationError[]
+): Promise<{ type: 'klados' | 'rhiza'; entity: KladosEntity | RhizaEntity } | null> {
+  // Try as klados first
+  try {
+    const { data: klados } = await client.api.GET('/kladoi/{id}', {
+      params: { path: { id: targetId } },
+    });
+
+    if (klados) {
+      if (klados.properties.status !== 'active') {
+        errors.push({
+          code: 'KLADOS_NOT_ACTIVE',
+          message: `Klados '${targetId}' is not active (status: ${klados.properties.status})`,
+          klados_id: targetId,
+        });
+      }
+      return { type: 'klados', entity: klados as KladosEntity };
+    }
+  } catch {
+    // Not a klados, try as rhiza
+  }
+
+  // Try as rhiza
+  try {
+    const { data: rhiza } = await client.api.GET('/rhizai/{id}', {
+      params: { path: { id: targetId } },
+    });
+
+    if (rhiza) {
+      if (rhiza.properties.status !== 'active') {
+        errors.push({
+          code: 'RHIZA_NOT_ACTIVE',
+          message: `Rhiza '${targetId}' is not active (status: ${rhiza.properties.status})`,
+        });
+      }
+      return { type: 'rhiza', entity: rhiza as RhizaEntity };
+    }
+  } catch {
+    // Not a rhiza either
+  }
+
+  errors.push({
+    code: 'TARGET_NOT_FOUND',
+    message: `Target '${targetId}' not found as klados or rhiza`,
+  });
+  return null;
+}
+
+/**
+ * Extract route targets from a ThenSpec
+ */
+function extractRouteTargets(then: ThenSpec): string[] {
+  if ('done' in then) return [];
+
+  const targets: string[] = [];
+
+  if ('pass' in then && then.route) {
+    targets.push(...then.route.map((r) => r.target));
+  }
+  if ('scatter' in then && then.route) {
+    targets.push(...then.route.map((r) => r.target));
+  }
+  if ('gather' in then && then.route) {
+    targets.push(...then.route.map((r) => r.target));
+  }
+
+  return targets;
 }
 
 /**
@@ -630,7 +806,7 @@ function validateCardinalityRuntime(
   errors: ValidationError[],
   warnings: ValidationWarning[]
 ): void {
-  if (!then || 'done' in then || 'rhiza' in then) {
+  if ('done' in then) {
     return;
   }
 
@@ -643,17 +819,17 @@ function validateCardinalityRuntime(
     // Scatter requires produces.cardinality === 'many'
     if (sourceProduces.cardinality !== 'many') {
       errors.push({
-        code: 'SCATTER_PRODUCES_ONE',
+        code: 'PRODUCER_CARDINALITY_MISMATCH',
         message: `Klados '${kladosId}' uses scatter but produces.cardinality is 'one'`,
         klados_id: kladosId,
       });
     }
 
-    // Scatter target must accept 'one'
+    // Scatter target must accept 'one' (if it's a klados)
     const targetKlados = kladoi.get(then.scatter);
     if (targetKlados && targetKlados.properties.accepts.cardinality !== 'one') {
       errors.push({
-        code: 'SCATTER_TARGET_MANY',
+        code: 'TARGET_CARDINALITY_MISMATCH',
         message: `Scatter target '${then.scatter}' accepts 'many', should accept 'one'`,
         klados_id: kladosId,
       });
@@ -671,11 +847,11 @@ function validateCardinalityRuntime(
   }
 
   if ('gather' in then) {
-    // Gather target must accept 'many'
+    // Gather target must accept 'many' (if it's a klados)
     const targetKlados = kladoi.get(then.gather);
     if (targetKlados && targetKlados.properties.accepts.cardinality !== 'many') {
       errors.push({
-        code: 'GATHER_TARGET_ONE',
+        code: 'TARGET_CARDINALITY_MISMATCH',
         message: `Gather target '${then.gather}' accepts 'one', should accept 'many'`,
         klados_id: kladosId,
       });
@@ -701,12 +877,6 @@ function validateCardinalityRuntime(
         targetKlados.properties.accepts.types,
         warnings
       );
-    }
-  }
-
-  if ('route' in then) {
-    for (const rule of then.route) {
-      validateCardinalityRuntime(kladosId, rule.then, kladoi, errors, warnings);
     }
   }
 }
@@ -807,6 +977,38 @@ if (!rhizaResult.valid) {
   console.error('Rhiza validation errors:', rhizaResult.errors);
 }
 
+// Example with routes (conditional routing)
+const routedRhizaResult = validateRhizaProperties({
+  label: 'Image Pipeline',
+  version: '1.0',
+  entry: 'II01klados_classify...',
+  flow: {
+    'II01klados_classify...': {
+      then: {
+        pass: 'II01klados_default...',
+        route: [
+          {
+            where: { property: 'file_type', equals: 'image/jpeg' },
+            target: 'II01klados_jpeg...',
+          },
+          {
+            where: {
+              or: [
+                { property: 'file_type', equals: 'image/png' },
+                { property: 'file_type', equals: 'image/webp' },
+              ],
+            },
+            target: 'II01klados_convert...',
+          },
+        ],
+      },
+    },
+    'II01klados_jpeg...': { then: { done: true } },
+    'II01klados_convert...': { then: { pass: 'II01klados_jpeg...' } },
+    'II01klados_default...': { then: { done: true } },
+  },
+});
+
 // Runtime validation (at invoke time)
 const runtimeResult = await validateRhizaRuntime(client, rhizaProperties);
 
@@ -814,6 +1016,8 @@ if (!runtimeResult.valid) {
   console.error('Runtime validation errors:', runtimeResult.errors);
 } else {
   // runtimeResult.kladoi contains all loaded klados entities
+  // runtimeResult.rhizai contains any rhiza targets (sub-workflows)
   console.log('Loaded kladoi:', runtimeResult.kladoi.size);
+  console.log('Loaded rhizai:', runtimeResult.rhizai.size);
 }
 ```

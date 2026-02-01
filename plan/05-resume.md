@@ -2,7 +2,9 @@
 
 ## Overview
 
-The resume module enables recovery from failed workflow executions. By traversing the log chain, we can find error leaves and re-invoke the exact same requests.
+The resume module enables recovery from failed workflow executions. By traversing the log chain (children point to parents), we can find error leaves and re-invoke the exact same requests.
+
+**Key architectural principle**: Fire-and-forget. Parents invoke children and log the invocation, then they're done. Children create their own log entries pointing BACK to parent logs. No parent updates occur when children complete or fail.
 
 ---
 
@@ -11,9 +13,11 @@ The resume module enables recovery from failed workflow executions. By traversin
 1. **Traverse log chain** to find all terminal nodes (leaves)
 2. **Identify error leaves** - logs with `status: error`
 3. **Check retryability** - skip non-retryable errors
-4. **Find invocation record** in parent log
+4. **Find invocation record** in the errored log's `received.invocation`
 5. **Re-invoke** with the same request (new job_id)
-6. **Update parent** to track the new job
+6. **New job's log points to failed log** - maintaining the audit chain
+
+The log chain is built by children pointing to parents via `received.from_log`. Resume creates a new job that points to the original failed log, preserving the complete history.
 
 ```
 Before Resume:
@@ -21,9 +25,10 @@ Before Resume:
                     │   Root Log  │
                     │   (done)    │
                     └──────┬──────┘
+                           │ children point up
            ┌───────────────┼───────────────┐
-           ▼               ▼               ▼
-    ┌──────────┐    ┌──────────┐    ┌──────────┐
+           │               │               │
+    ┌──────┴───┐    ┌──────┴───┐    ┌──────┴───┐
     │  Log B   │    │  Log C   │    │  Log D   │
     │  (done)  │    │ (ERROR)  │    │  (done)  │
     └──────────┘    └──────────┘    └──────────┘
@@ -33,16 +38,18 @@ After Resume:
                     │   Root Log  │
                     │   (done)    │
                     └──────┬──────┘
+                           │
            ┌───────────────┼───────────────┐
-           ▼               ▼               ▼
-    ┌──────────┐    ┌──────────┐    ┌──────────┐
+           │               │               │
+    ┌──────┴───┐    ┌──────┴───┐    ┌──────┴───┐
     │  Log B   │    │  Log C   │    │  Log D   │
     │  (done)  │    │ (ERROR)  │    │  (done)  │
     └──────────┘    └──────────┘    └──────────┘
                            │
-                           ▼ (retry)
+                           │ retry points to failed log
+                           ▼
                     ┌──────────┐
-                    │  Log C'  │
+                    │  Log C'  │ ← new job_id, points to Log C
                     │ (running)│
                     └──────────┘
 ```
@@ -61,7 +68,7 @@ import { getJobLogs, buildLogTree } from '../logging/chain';
 /**
  * Traverse the log chain and return all leaf nodes
  *
- * A leaf is a log entry with no children (no other logs received_from it)
+ * A leaf is a log entry with no children (no other logs point to it via received.from_log)
  */
 export async function findLeaves(
   client: ArkeClient,
@@ -166,49 +173,6 @@ export async function findErrorLeaves(
 }
 
 /**
- * Find stuck jobs - invocations that were made but never completed
- */
-export async function findStuckJobs(
-  client: ArkeClient,
-  jobCollectionId: string
-): Promise<ErrorLeaf[]> {
-  const logs = await getJobLogs(client, jobCollectionId);
-  const stuckJobs: ErrorLeaf[] = [];
-
-  for (const log of logs) {
-    if (!log.handoffs) continue;
-
-    for (const handoff of log.handoffs) {
-      for (const invocation of handoff.invocations) {
-        if (invocation.status === 'pending') {
-          // Check if there's a corresponding log entry
-          const childLog = logs.find((l) => l.job_id === invocation.job_id);
-
-          if (!childLog) {
-            // Invocation was made but no log exists - stuck
-            stuckJobs.push({
-              log: {
-                ...log,
-                status: 'error',
-                error: {
-                  code: 'STUCK',
-                  message: `Invocation ${invocation.job_id} was made but never started`,
-                  retryable: true,
-                },
-              },
-              retryable: true,
-              path: buildPath(log, logs),
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return stuckJobs;
-}
-
-/**
  * Build path from root to a log entry
  */
 function buildPath(
@@ -234,7 +198,6 @@ export interface ErrorSummary {
   totalErrors: number;
   retryableErrors: number;
   nonRetryableErrors: number;
-  stuckJobs: number;
   errors: Array<{
     klados: string;
     jobId: string;
@@ -249,16 +212,12 @@ export async function getErrorSummary(
   jobCollectionId: string
 ): Promise<ErrorSummary> {
   const errorLeaves = await findErrorLeaves(client, jobCollectionId);
-  const stuckJobs = await findStuckJobs(client, jobCollectionId);
-
-  const allErrors = [...errorLeaves, ...stuckJobs];
 
   return {
-    totalErrors: allErrors.length,
-    retryableErrors: allErrors.filter((e) => e.retryable).length,
-    nonRetryableErrors: allErrors.filter((e) => !e.retryable).length,
-    stuckJobs: stuckJobs.length,
-    errors: allErrors.map((e) => ({
+    totalErrors: errorLeaves.length,
+    retryableErrors: errorLeaves.filter((e) => e.retryable).length,
+    nonRetryableErrors: errorLeaves.filter((e) => !e.retryable).length,
+    errors: errorLeaves.map((e) => ({
       klados: e.log.klados,
       jobId: e.log.job_id,
       error: e.log.error?.message ?? 'Unknown error',
@@ -275,12 +234,10 @@ export async function getErrorSummary(
 import type { ArkeClient } from '@arke-institute/sdk';
 import type {
   KladosLogEntry,
-  InvocationRecord,
   ResumeResult,
   ResumedJob,
 } from '../types';
-import { findErrorLeaves, findStuckJobs } from './find-errors';
-import { getJobLogs, getLogEntry } from '../logging/chain';
+import { findErrorLeaves } from './find-errors';
 import { invokeKladosRaw } from '../handoff/invoke';
 import { generateId } from '../utils';
 
@@ -301,8 +258,12 @@ export interface ResumeOptions {
 /**
  * Resume a failed workflow
  *
- * Finds all error leaves, looks up their invocation records in parent logs,
- * and re-invokes with the same request (new job_id).
+ * Fire-and-forget architecture:
+ * - Find error leaves by traversing the log chain (children → parents)
+ * - Extract the invocation record from the errored log's `received.invocation`
+ * - Re-invoke with the same request but a new job_id
+ * - The new job's log will point to the failed log via `received.from_log`
+ * - NO parent updates - the chain is maintained by children pointing to parents
  */
 export async function resumeWorkflow(
   client: ArkeClient,
@@ -317,11 +278,6 @@ export async function resumeWorkflow(
 
   // Find all error leaves
   const errorLeaves = await findErrorLeaves(client, jobCollectionId);
-  const stuckJobs = await findStuckJobs(client, jobCollectionId);
-  const allErrors = [...errorLeaves, ...stuckJobs];
-
-  // Get all logs for parent lookup
-  const logs = await getJobLogs(client, jobCollectionId);
 
   const result: ResumeResult = {
     resumed: 0,
@@ -329,7 +285,7 @@ export async function resumeWorkflow(
     jobs: [],
   };
 
-  for (const errorLeaf of allErrors) {
+  for (const errorLeaf of errorLeaves) {
     // Check limits
     if (maxJobs && result.resumed >= maxJobs) break;
 
@@ -344,58 +300,33 @@ export async function resumeWorkflow(
       continue;
     }
 
-    // Find parent log
-    const parentLogId = errorLeaf.log.received.from_log;
-    if (!parentLogId) {
-      // This is the root log - can't resume from parent
-      // Would need to re-invoke the entire workflow
-      result.skipped++;
-      continue;
-    }
-
-    const parentLog = logs.find((l) => l.id === parentLogId);
-    if (!parentLog || !parentLog.handoffs) {
-      result.skipped++;
-      continue;
-    }
-
-    // Find the invocation record for this job
-    let invocation: InvocationRecord | undefined;
-    for (const handoff of parentLog.handoffs) {
-      invocation = handoff.invocations.find(
-        (inv) => inv.job_id === errorLeaf.log.job_id
-      );
-      if (invocation) break;
-    }
-
+    // Get the invocation record from the errored log
+    // This contains the original request that can be replayed
+    const invocation = errorLeaf.log.received.invocation;
     if (!invocation) {
+      // No invocation record - this was a root job or missing data
       result.skipped++;
       continue;
     }
 
     // Re-invoke with same request, new job_id
+    // The new log will point to the failed log, maintaining the audit chain
     const newJobId = `job_${generateId()}`;
     const newRequest = {
       ...invocation.request,
       job_id: newJobId,
+      // Point to the failed log for audit trail
+      from_log: errorLeaf.log.id,
     };
 
     try {
       await invokeKladosRaw(client, newRequest);
 
-      // Update parent's invocation record to point to new job
-      await updateInvocationInParent(
-        client,
-        parentLog,
-        invocation.job_id,
-        newJobId
-      );
-
       result.jobs.push({
         original_job_id: errorLeaf.log.job_id,
         new_job_id: newJobId,
         klados: errorLeaf.log.klados,
-        target: invocation.target_entity,
+        target: invocation.request.target,
         error: errorLeaf.log.error?.message ?? 'Unknown error',
       });
       result.resumed++;
@@ -407,30 +338,6 @@ export async function resumeWorkflow(
   }
 
   return result;
-}
-
-/**
- * Update a parent log's invocation record with new job ID
- */
-async function updateInvocationInParent(
-  client: ArkeClient,
-  parentLog: KladosLogEntry,
-  oldJobId: string,
-  newJobId: string
-): Promise<void> {
-  // Find the log file entity
-  // Note: We need the file ID, not the log ID
-  // The log ID is stored in the log entry, but we need to query by job_id
-
-  // This is a simplified version - in practice we'd need to find the file
-  // by querying the job collection
-
-  // For now, assume we can update via a helper
-  // In the real implementation, we'd update the file entity's properties
-
-  // The parent log's handoffs would be updated to change:
-  // invocations[].job_id from oldJobId to newJobId
-  // invocations[].status from 'error' to 'pending'
 }
 
 /**
@@ -461,11 +368,9 @@ export async function canResume(
   nonRetryableCount: number;
 }> {
   const errorLeaves = await findErrorLeaves(client, jobCollectionId);
-  const stuckJobs = await findStuckJobs(client, jobCollectionId);
-  const allErrors = [...errorLeaves, ...stuckJobs];
 
-  const retryableCount = allErrors.filter((e) => e.retryable).length;
-  const nonRetryableCount = allErrors.filter((e) => !e.retryable).length;
+  const retryableCount = errorLeaves.filter((e) => e.retryable).length;
+  const nonRetryableCount = errorLeaves.filter((e) => !e.retryable).length;
 
   return {
     canResume: retryableCount > 0,
@@ -482,7 +387,6 @@ export { findLeaves, findLeavesInTree, getPathToLog } from './traverse';
 
 export {
   findErrorLeaves,
-  findStuckJobs,
   getErrorSummary,
 } from './find-errors';
 export type { ErrorLeaf, ErrorSummary } from './find-errors';
@@ -494,6 +398,48 @@ export {
 } from './resume';
 export type { ResumeOptions } from './resume';
 ```
+
+---
+
+## Key Concepts
+
+### Fire-and-Forget Architecture
+
+Parents never track children. The flow is:
+
+1. Parent invokes child, logs the handoff (with `invocations` array)
+2. Child receives invocation, creates its own log pointing to parent
+3. Child completes or fails - its log records the outcome
+4. Parent is NEVER updated
+
+The log chain is built entirely by children pointing to parents via `received.from_log`.
+
+### InvocationRecord in Logs
+
+Each log entry contains `received.invocation` which stores the original request:
+
+```typescript
+interface KladosLogEntry {
+  received: {
+    from_log?: string;           // Parent log ID (builds the chain)
+    invocation?: InvocationRecord; // The request that created this job
+  };
+  // ... other fields
+}
+
+interface InvocationRecord {
+  request: KladosRequest;  // Everything needed for replay
+  batch_index?: number;    // Position in batch if applicable
+}
+```
+
+### Resume Creates New Jobs
+
+When resuming:
+- A NEW `job_id` is generated for the retry
+- The original `job_id` stays in the log chain for audit
+- The new job's log points to the failed log via `from_log`
+- This creates a clear retry history: `Original → Failed → Retry1 → Retry2 → Success`
 
 ---
 
@@ -552,7 +498,7 @@ Request:
 {
   "retryable_only": true,
   "max_jobs": 10,
-  "job_ids": ["job_abc", "job_def"]  // optional filter
+  "job_ids": ["job_abc", "job_def"]
 }
 ```
 

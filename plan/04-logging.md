@@ -2,7 +2,7 @@
 
 ## Overview
 
-The logging module handles writing klados execution logs to the job collection. Logs form a chain via `received_from` and `handed_off_to` relationship predicates, enabling traversal and resumability.
+The logging module handles writing klados execution logs to the job collection. Logs are written when execution completes successfully or upon an error. Logs form a chain via `received_from` relationships (stored both in the log entry and as entity relationships), enabling traversal and resumability.
 
 ---
 
@@ -13,30 +13,28 @@ Job Collection
 │
 ├── Log Entry A (entry klados)
 │   ├── properties: { status: done, produced: [...], handoffs: [...] }
-│   └── relationships:
-│       └── handed_off_to: [Log B, Log C, Log D]  (scatter)
+│   └── relationships: (none - root entry)
 │
 ├── Log Entry B (batch[0])
-│   ├── properties: { status: done, ... }
+│   ├── properties: { status: done, received.from_logs: [A], ... }
 │   └── relationships:
-│       ├── received_from: Log A
-│       └── handed_off_to: [Log E]  (gather trigger)
+│       └── received_from: Log A
 │
 ├── Log Entry C (batch[1])
-│   ├── properties: { status: error, error: {...} }
+│   ├── properties: { status: error, received.from_logs: [A], error: {...} }
 │   └── relationships:
 │       └── received_from: Log A
 │
 ├── Log Entry D (batch[2])
-│   ├── properties: { status: done, ... }
+│   ├── properties: { status: done, received.from_logs: [A], ... }
 │   └── relationships:
-│       ├── received_from: Log A
-│       └── handed_off_to: [Log E]  (not trigger, just recorded)
+│       └── received_from: Log A
 │
 └── Log Entry E (gather)
-    ├── properties: { status: done, ... }
+    ├── properties: { status: done, received.from_logs: [B, D], ... }
     └── relationships:
-        └── received_from: [Log B, Log D]  (multiple parents)
+        ├── received_from: Log B
+        └── received_from: Log D
 ```
 
 ---
@@ -45,14 +43,17 @@ Job Collection
 
 | Predicate | Direction | Description |
 |-----------|-----------|-------------|
-| `received_from` | Child → Parent | Points to the log entry that invoked this klados |
-| `handed_off_to` | Parent → Child | Points to log entries this klados invoked |
+| `received_from` | Child → Parent(s) | Points to the log entry(ies) that triggered this klados |
 
-These predicates enable:
-- **Forward traversal**: Follow `handed_off_to` to see what was invoked
-- **Backward traversal**: Follow `received_from` to find the invoker
+The `from_logs` array is stored in:
+1. **Log entry properties** (`received.from_logs`) - for data access
+2. **Entity relationships** (`received_from` predicate) - for graph traversal
+
+This enables:
+- **Forward traversal**: Query for logs where `received_from` points to a given log
+- **Backward traversal**: Follow `received_from` relationships to find invoker(s)
 - **Error detection**: Find leaves with `status: error`
-- **Resume**: Re-invoke from parent's invocation record
+- **Resume**: Re-invoke from the handoff's invocation record
 
 ---
 
@@ -67,7 +68,7 @@ import type { LogMessage } from '../types';
  * KladosLogger - In-memory log message collector
  *
  * Collects log messages during klados execution.
- * Messages are written to the log entry when execution completes.
+ * Messages are written to the log entry when execution completes or upon an error.
  */
 export class KladosLogger {
   private messages: LogMessage[] = [];
@@ -163,9 +164,6 @@ export interface WriteLogOptions {
   /** Agent info */
   agentId: string;
   agentVersion: string;
-
-  /** Previous log entry ID (for received_from relationship) */
-  previousLogId?: string;
 }
 
 /**
@@ -183,7 +181,8 @@ export interface WriteLogResult {
  * Write a klados log entry to the job collection
  *
  * Creates a file entity with the log data and adds relationships
- * for chain traversal.
+ * for chain traversal. The from_logs array is stored both in
+ * properties and as received_from relationships.
  */
 export async function writeKladosLog(
   options: WriteLogOptions
@@ -195,7 +194,6 @@ export async function writeKladosLog(
     messages,
     agentId,
     agentVersion,
-    previousLogId,
   } = options;
 
   // Build the job log structure
@@ -208,7 +206,7 @@ export async function writeKladosLog(
 
   // Generate log entity ID
   const logId = `log_${generateId()}`;
-  const fileKey = `${entry.job_id}/${entry.klados}/${logId}.json`;
+  const fileKey = `${entry.job_id}/${entry.klados_id}/${logId}.json`;
 
   // 1. Create file entity with log data
   const { data: fileEntity } = await client.api.POST('/files', {
@@ -219,7 +217,7 @@ export async function writeKladosLog(
       properties: {
         type: 'klados_log',
         rhiza_id: entry.rhiza_id,
-        klados: entry.klados,
+        klados_id: entry.klados_id,
         job_id: entry.job_id,
         status: entry.status,
         log_data: jobLog as Record<string, unknown>,
@@ -239,24 +237,20 @@ export async function writeKladosLog(
     { predicate: 'contains', peer: fileId, peer_type: 'file' },
   ];
 
-  // Add received_from if we have a previous log
-  if (previousLogId) {
-    relationships.push({
-      predicate: 'received_from',
-      peer: previousLogId,
-      peer_type: 'file',
-    });
+  // 3. Add received_from relationships for graph traversal
+  // These mirror the from_logs array in the entry properties
+  if (entry.received.from_logs && entry.received.from_logs.length > 0) {
+    for (const parentLogId of entry.received.from_logs) {
+      relationships.push({
+        predicate: 'received_from',
+        peer: parentLogId,
+        peer_type: 'file',
+      });
+    }
   }
 
-  // 3. Update job collection with relationships (CAS retry)
+  // 4. Update job collection with relationships (CAS retry)
   await updateCollectionWithRetry(client, jobCollectionId, relationships);
-
-  // 4. If we have handoffs, update previous log with handed_off_to
-  if (previousLogId && entry.handoffs && entry.handoffs.length > 0) {
-    // The previous log should add us to its handed_off_to
-    // This is handled when we write our log - we add received_from
-    // The handed_off_to can be derived from received_from queries
-  }
 
   return { logId, fileId };
 }
@@ -474,8 +468,8 @@ export async function getRootLog(
   jobCollectionId: string
 ): Promise<KladosLogEntry | null> {
   const logs = await getJobLogs(client, jobCollectionId);
-  // Root log has no received.from_log
-  return logs.find((l) => !l.received.from_log) ?? null;
+  // Root log has no from_logs
+  return logs.find((l) => !l.received.from_logs || l.received.from_logs.length === 0) ?? null;
 }
 
 /**
@@ -487,25 +481,31 @@ export async function getChildLogs(
   parentLogId: string
 ): Promise<KladosLogEntry[]> {
   const logs = await getJobLogs(client, jobCollectionId);
-  return logs.filter((l) => l.received.from_log === parentLogId);
+  return logs.filter((l) =>
+    l.received.from_logs && l.received.from_logs.includes(parentLogId)
+  );
 }
 
 /**
- * Get parent log entry
+ * Get parent log entries
+ * Returns multiple parents for gather operations
  */
-export async function getParentLog(
+export async function getParentLogs(
   client: ArkeClient,
   jobCollectionId: string,
   childLogId: string
-): Promise<KladosLogEntry | null> {
+): Promise<KladosLogEntry[]> {
   const logs = await getJobLogs(client, jobCollectionId);
   const child = logs.find((l) => l.id === childLogId);
-  if (!child?.received.from_log) return null;
-  return logs.find((l) => l.id === child.received.from_log) ?? null;
+  if (!child?.received.from_logs || child.received.from_logs.length === 0) {
+    return [];
+  }
+  return logs.filter((l) => child.received.from_logs!.includes(l.id));
 }
 
 /**
  * Build a tree of log entries from root
+ * Note: gather nodes appear under multiple parents in this representation
  */
 export interface LogTree {
   entry: KladosLogEntry;
@@ -517,12 +517,14 @@ export async function buildLogTree(
   jobCollectionId: string
 ): Promise<LogTree | null> {
   const logs = await getJobLogs(client, jobCollectionId);
-  const root = logs.find((l) => !l.received.from_log);
+  const root = logs.find((l) => !l.received.from_logs || l.received.from_logs.length === 0);
 
   if (!root) return null;
 
   function buildNode(log: KladosLogEntry): LogTree {
-    const children = logs.filter((l) => l.received.from_log === log.id);
+    const children = logs.filter((l) =>
+      l.received.from_logs && l.received.from_logs.includes(log.id)
+    );
     return {
       entry: log,
       children: children.map(buildNode),
@@ -550,7 +552,7 @@ export {
   getLogEntry,
   getRootLog,
   getChildLogs,
-  getParentLog,
+  getParentLogs,
   buildLogTree,
 } from './chain';
 export type { LogTree } from './chain';
@@ -565,6 +567,7 @@ import {
   KladosLogger,
   writeKladosLog,
   updateLogWithHandoffs,
+  updateLogStatus,
 } from '@arke-institute/rhiza';
 
 // During klados execution
@@ -574,7 +577,7 @@ logger.info('Starting processing', { target: entityId });
 logger.info('Extracted 10 pages from PDF');
 logger.success('Processing complete');
 
-// Write initial log (status: running)
+// Write log entry (on completion or error)
 const { logId, fileId } = await writeKladosLog({
   client,
   jobCollectionId,
@@ -582,33 +585,66 @@ const { logId, fileId } = await writeKladosLog({
     id: logId,
     type: 'klados_log',
     rhiza_id: context.rhiza.id,
-    klados: context.rhiza.position,
+    klados_id: kladosId,
     job_id: context.job_id,
-    started_at: new Date().toISOString(),
-    status: 'running',
+    started_at: startTime,
+    completed_at: new Date().toISOString(),
+    status: 'done',
     received: {
       target: context.target,
-      from_log: context.rhiza.log_chain[0],
-      batch: context.batch,
+      // from_logs: single parent for pass/scatter, multiple parents for gather
+      from_logs: context.rhiza.parent_logs,
+      batch: context.rhiza.batch,
     },
+    produced: {
+      entity_ids: outputIds,
+    },
+    handoffs: [
+      {
+        type: 'scatter',
+        target: 'ocr-service',
+        target_type: 'klados',
+        batch_id: batchId,
+        invocations: [
+          // Fire-and-forget: just the request we sent
+          { request: ocrRequest1, batch_index: 0 },
+          { request: ocrRequest2, batch_index: 1 },
+          { request: ocrRequest3, batch_index: 2 },
+        ],
+      },
+    ],
   },
   messages: logger.getMessages(),
   agentId,
   agentVersion,
-  previousLogId: context.rhiza.log_chain[0],
 });
-
-// After handoffs complete, update log
-await updateLogWithHandoffs(client, fileId, [
-  {
-    type: 'scatter',
-    target: 'ocr-service',
-    target_type: 'klados',
-    batch_id: batchId,
-    invocations: invocationRecords,
-  },
-]);
-
-// Update status to done
-await updateLogStatus(client, fileId, 'done');
 ```
+
+---
+
+## Key Design Points
+
+### Fire-and-Forget Invocations
+
+The `InvocationRecord` is simplified to just contain:
+- `request`: The exact `KladosRequest` we sent (for replay on resume)
+- `batch_index`: Optional batch index for scatter operations
+
+We do not track the result of invocations. The invoked klados creates its own log entry pointing back to us via `received.from_logs`.
+
+### Handoff Types
+
+Only three handoff types exist:
+- `pass`: 1:1 handoff to next klados or rhiza
+- `scatter`: 1:N fan-out to multiple invocations
+- `gather`: N:1 fan-in collecting results from siblings
+
+The `target` can be either a klados ID or a rhiza ID. The `target_type` field records what was discovered at invocation time.
+
+### Dual Storage of Parent References
+
+The `from_logs` array is stored in two places:
+1. **Properties** (`received.from_logs`): Direct data access when reading the log
+2. **Relationships** (`received_from` predicate): Graph traversal via Arke's relationship queries
+
+This enables both efficient data reading and graph-based log chain traversal.

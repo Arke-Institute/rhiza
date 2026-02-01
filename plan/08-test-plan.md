@@ -84,10 +84,10 @@ describe('validateRhizaRuntime', () => {
 // src/__tests__/unit/route.test.ts
 
 describe('evaluateWhere', () => {
-  it('matches string equality');
-  it('matches number equality');
-  it('matches boolean equality');
-  it('returns false on mismatch');
+  it('matches simple equality');
+  it('matches AND conditions');
+  it('matches OR conditions');
+  it('handles nested AND/OR');
   it('handles nested property paths (e.g., "metadata.format")');
   it('returns false for missing property');
 });
@@ -100,7 +100,26 @@ describe('matchRoute', () => {
 });
 ```
 
-#### 1.5 Scatter Logic (Partial mock)
+#### 1.5 Target Discovery (Mock client)
+
+```typescript
+// src/__tests__/unit/target.test.ts
+
+describe('resolveTarget', () => {
+  it('returns default target when no route rules');
+  it('evaluates route rules in order');
+  it('returns first matching rule target');
+  it('falls back to default when no rules match');
+});
+
+describe('discoverTargetType', () => {
+  it('returns klados when target is klados entity');
+  it('returns rhiza when target is rhiza entity');
+  it('throws when target not found');
+});
+```
+
+#### 1.6 Scatter Logic (Partial mock)
 
 ```typescript
 // src/__tests__/unit/scatter.test.ts
@@ -122,7 +141,7 @@ describe('createScatter', () => {
 });
 ```
 
-#### 1.6 Gather Logic (Mock client)
+#### 1.7 Gather Logic (Mock client)
 
 ```typescript
 // src/__tests__/unit/gather.test.ts
@@ -143,7 +162,7 @@ describe('errorBatchSlot', () => {
 });
 ```
 
-#### 1.7 Handoff Interpretation (Mock client)
+#### 1.8 Handoff Interpretation (Mock client)
 
 ```typescript
 // src/__tests__/unit/interpret.test.ts
@@ -156,33 +175,29 @@ describe('interpretThen', () => {
 
   describe('pass', () => {
     it('invokes target klados with outputs');
+    it('invokes target with route modifier');
+    it('discovers target type at runtime (klados or rhiza)');
     it('returns handoff record');
   });
 
   describe('scatter', () => {
     it('creates batch and invokes target for each output');
+    it('invokes target with route modifier');
+    it('discovers target type at runtime (klados or rhiza)');
     it('returns batch ID and invocations');
   });
 
   describe('gather', () => {
     it('updates batch slot');
     it('triggers gather target when last');
+    it('invokes target with route modifier');
+    it('discovers target type at runtime (klados or rhiza)');
     it('returns gather_wait when not last');
-  });
-
-  describe('rhiza', () => {
-    it('invokes sub-rhiza');
-    it('passes parent context for callback');
-  });
-
-  describe('route', () => {
-    it('matches and follows route rule');
-    it('throws when no route matches');
   });
 });
 ```
 
-#### 1.8 Log Chain Traversal (Mock data)
+#### 1.9 Log Chain Traversal (Mock data)
 
 ```typescript
 // src/__tests__/unit/traverse.test.ts
@@ -199,11 +214,6 @@ describe('findErrorLeaves', () => {
   it('builds path from root to error');
 });
 
-describe('findStuckJobs', () => {
-  it('finds invocations with no corresponding log');
-  it('marks stuck jobs as retryable');
-});
-
 describe('buildLogTree', () => {
   it('builds tree from root');
   it('handles scatter (multiple children)');
@@ -211,7 +221,7 @@ describe('buildLogTree', () => {
 });
 ```
 
-#### 1.9 Resume Logic (Mock client)
+#### 1.10 Resume Logic (Mock client)
 
 ```typescript
 // src/__tests__/unit/resume.test.ts
@@ -219,7 +229,6 @@ describe('buildLogTree', () => {
 describe('resumeWorkflow', () => {
   it('finds error leaves and re-invokes');
   it('uses original request with new job_id');
-  it('updates parent invocation record');
   it('skips non-retryable errors');
   it('respects maxJobs limit');
   it('filters by jobIds when provided');
@@ -233,7 +242,7 @@ describe('canResume', () => {
 });
 ```
 
-#### 1.10 Status Building (Mock data)
+#### 1.11 Status Building (Mock data)
 
 ```typescript
 // src/__tests__/unit/status.test.ts
@@ -257,6 +266,9 @@ interface MockClientConfig {
   // Pre-loaded klados entities (GET /kladoi/:id returns these)
   kladoi?: Record<string, { properties: KladosProperties; cid: string }>;
 
+  // Pre-loaded rhiza entities (GET /rhizai/:id returns these)
+  rhizai?: Record<string, { properties: RhizaProperties; cid: string }>;
+
   // Pre-loaded entities (GET /entities/:id returns these)
   entities?: Record<string, { properties: Record<string, unknown>; cid: string }>;
 
@@ -276,6 +288,7 @@ interface MockClientConfig {
 function createMockClient(config: MockClientConfig): MockArkeClient {
   const state = {
     kladoi: new Map(Object.entries(config.kladoi ?? {})),
+    rhizai: new Map(Object.entries(config.rhizai ?? {})),
     entities: new Map(Object.entries(config.entities ?? {})),
     created: [] as Array<{ type: string; properties: unknown }>,
     updated: [] as Array<{ id: string; properties: unknown }>,
@@ -291,6 +304,12 @@ function createMockClient(config: MockClientConfig): MockArkeClient {
           const klados = state.kladoi.get(id);
           if (!klados) return { error: { message: 'Not found' } };
           return { data: { id, type: 'klados', ...klados } };
+        }
+        if (path.includes('/rhizai/')) {
+          const id = options.params.path.id;
+          const rhiza = state.rhizai.get(id);
+          if (!rhiza) return { error: { message: 'Not found' } };
+          return { data: { id, type: 'rhiza', ...rhiza } };
         }
         if (path.includes('/entities/')) {
           const id = options.params.path.id;
@@ -451,6 +470,9 @@ export const noTerminalRhiza = {
 ```typescript
 // src/__tests__/fixtures/logs/partial-error.ts
 
+// InvocationRecord now only has `request` and optional `batch_index`
+// Fire-and-forget means we don't track status in parent logs
+
 export const partialErrorLogs: KladosLogEntry[] = [
   {
     id: 'log-root',
@@ -464,14 +486,14 @@ export const partialErrorLogs: KladosLogEntry[] = [
     received: { target: 'entity-1' },
     produced: { entity_ids: ['item-1', 'item-2', 'item-3'] },
     handoffs: [{
-      type: 'scatter',
+      type: 'scatter',  // Only 'pass' | 'scatter' | 'gather'
       target: 'II01klados_worker',
-      target_type: 'klados',
+      target_type: 'klados',  // Discovered at invocation time
       batch_id: 'batch-1',
       invocations: [
-        { job_id: 'job-2', target_entity: 'item-1', batch_index: 0, status: 'done', request: { /* ... */ } },
-        { job_id: 'job-3', target_entity: 'item-2', batch_index: 1, status: 'error', request: { /* ... */ } },
-        { job_id: 'job-4', target_entity: 'item-3', batch_index: 2, status: 'done', request: { /* ... */ } },
+        { request: { job_id: 'job-2', target: 'item-1', /* full KladosRequest */ }, batch_index: 0 },
+        { request: { job_id: 'job-3', target: 'item-2', /* full KladosRequest */ }, batch_index: 1 },
+        { request: { job_id: 'job-4', target: 'item-3', /* full KladosRequest */ }, batch_index: 2 },
       ],
     }],
   },
@@ -484,7 +506,7 @@ export const partialErrorLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:02:00Z',
-    received: { target: 'item-1', from_log: 'log-root', batch: { id: 'batch-1', index: 0, total: 3 } },
+    received: { target: 'item-1', from_logs: ['log-root'], batch: { id: 'batch-1', index: 0, total: 3 } },
     produced: { entity_ids: ['result-1'] },
   },
   {
@@ -496,7 +518,7 @@ export const partialErrorLogs: KladosLogEntry[] = [
     status: 'error',
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:01:30Z',
-    received: { target: 'item-2', from_log: 'log-root', batch: { id: 'batch-1', index: 1, total: 3 } },
+    received: { target: 'item-2', from_logs: ['log-root'], batch: { id: 'batch-1', index: 1, total: 3 } },
     error: { code: 'PROCESSING_FAILED', message: 'Timeout', retryable: true },
   },
   {
@@ -508,7 +530,7 @@ export const partialErrorLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:02:00Z',
-    received: { target: 'item-3', from_log: 'log-root', batch: { id: 'batch-1', index: 2, total: 3 } },
+    received: { target: 'item-3', from_logs: ['log-root'], batch: { id: 'batch-1', index: 2, total: 3 } },
     produced: { entity_ids: ['result-3'] },
   },
 ];
@@ -730,6 +752,7 @@ src/
 │   │   │   ├── scatter.test.ts
 │   │   │   ├── gather.test.ts
 │   │   │   └── route.test.ts
+│   │   ├── target.test.ts
 │   │   ├── traverse.test.ts
 │   │   ├── resume.test.ts
 │   │   └── status.test.ts
@@ -762,8 +785,7 @@ src/
 │       │   └── invalid.ts
 │       └── logs/
 │           ├── success.ts
-│           ├── partial-error.ts
-│           └── stuck.ts
+│           └── partial-error.ts
 ```
 
 ---
@@ -809,50 +831,56 @@ src/
 - [ ] All runtime validation tests pass
 
 ### Step 5: Route tests + implementation
-- [ ] Write route matching tests
+- [ ] Write route matching tests (including AND/OR conditions)
 - [ ] Implement `evaluateWhere()`, `matchRoute()`
 - [ ] All route tests pass
 
-### Step 6: Scatter/Gather tests + implementation
+### Step 6: Target discovery tests + implementation
+- [ ] Write target resolution tests
+- [ ] Write target type discovery tests
+- [ ] Implement `resolveTarget()`, `discoverTargetType()`
+- [ ] All target tests pass
+
+### Step 7: Scatter/Gather tests + implementation
 - [ ] Write scatter tests
 - [ ] Write gather tests
 - [ ] Implement `findGatherTarget()`, `createScatter()`, `completeBatchSlot()`
 - [ ] All scatter/gather tests pass
 
-### Step 7: Handoff interpretation tests + implementation
+### Step 8: Handoff interpretation tests + implementation
 - [ ] Write interpret tests
 - [ ] Implement `interpretThen()`
 - [ ] All interpret tests pass
 
-### Step 8: Log chain tests + implementation
+### Step 9: Log chain tests + implementation
 - [ ] Write traverse tests
 - [ ] Implement log chain functions
 - [ ] All traverse tests pass
 
-### Step 9: Resume tests + implementation
+### Step 10: Resume tests + implementation
 - [ ] Write resume tests
 - [ ] Implement `findErrorLeaves()`, `resumeWorkflow()`
 - [ ] All resume tests pass
 
-### Step 10: Status tests + implementation
+### Step 11: Status tests + implementation
 - [ ] Write status tests
 - [ ] Implement `buildStatusFromLogs()`
 - [ ] All status tests pass
 
-### Step 11: API changes (parallel with above)
+### Step 12: API changes (parallel with above)
 - [ ] Add klados profile to arke_v1
 - [ ] Add rhiza profile to arke_v1
 - [ ] Add /kladoi routes
 - [ ] Add /rhizai routes
 - [ ] Deploy to test environment
 
-### Step 12: Integration tests
+### Step 13: Integration tests
 - [ ] Write integration tests
 - [ ] Deploy test kladoi
 - [ ] Run against test network
 - [ ] All integration tests pass
 
-### Step 13: E2E tests
+### Step 14: E2E tests
 - [ ] Write e2e tests
 - [ ] Run full workflow tests
 - [ ] All e2e tests pass
