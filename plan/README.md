@@ -196,9 +196,12 @@ Klados sees: then: { rhiza: 'II01rhiza_sub...' }
 │   ├── 03-handoff.md            # Handoff logic
 │   ├── 04-logging.md            # Logging and chain
 │   ├── 05-resume.md             # Resumability
-│   ├── 06-api-changes.md        # arke_v1 API changes
+│   ├── 06-api-changes.md        # arke_v1 API changes (incl. verification)
 │   ├── 07-implementation.md     # Implementation phases
 │   └── 08-test-plan.md          # Test plan
+│
+├── reference/                    # Reference documentation
+│   └── agent-verification.md    # Verification system docs (agents & kladoi)
 │
 ├── src/
 │   ├── types/                   # Type definitions

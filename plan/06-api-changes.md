@@ -55,6 +55,11 @@ A **rhiza** composes kladoi into a workflow. It defines WHAT happens, in WHAT or
 }
 ```
 
+**Flow notes:**
+- Target IDs can be klados OR rhiza (discovered at runtime via `validateRhizaRuntime`)
+- Route conditions can be added for conditional branching: `{ scatter: 'default_id', route: [...] }`
+- The klados fetches the rhiza entity itself to get the flow definition; we only pass the path so it knows which instance it is if the same klados appears multiple times
+
 ---
 
 ## New Files
@@ -348,9 +353,8 @@ export function createKladoiRoutes(config: KladoiRoutesConfig): OpenAPIHono {
       expires_at: expiresAt,
       network,
       // Workflow context (only present when invoked as part of rhiza)
+      // Note: batch info is inside rhiza context if present (not separate)
       rhiza: body.rhiza_context,
-      // Batch context (only present when part of scatter)
-      batch: body.batch_context,
     };
 
     // Invoke klados endpoint
@@ -428,6 +432,7 @@ import {
   RHIZA_TYPE,
 } from '@/profiles/rhiza';
 import { getKlados, grantKladosPermissions, invokeKladosEndpoint } from '@/profiles/klados';
+import { grantRhizaPermissions } from '@/profiles/rhiza'; // For sub-workflow permissions
 import { createRootJobCollection } from '@/profiles/job_collection';
 import { validateRhizaRuntime } from '@arke-institute/rhiza';
 import { generateId } from '@/utils/ulid';
@@ -561,15 +566,23 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
     // Permission check
     await requireAction({ storage, tip }, actor.pi, { id, type: RHIZA_TYPE }, 'rhiza:invoke');
 
-    // Runtime validation - load all kladoi and check compatibility
+    // Runtime validation - load all referenced entities and check compatibility
+    // Note: validateRhizaRuntime returns both `kladoi` and `rhizai` maps since
+    // flow targets can be either klados (direct action) or rhiza (sub-workflow).
+    // Target types are discovered at load time by fetching each entity.
     const runtimeValidation = await validateRhizaRuntime(
-      // Pass a client-like interface for loading kladoi
+      // Pass a client-like interface for loading kladoi and rhizai
       {
         api: {
           GET: async (path: string, options: any) => {
+            const entityId = options.params.path.id;
+            // Try loading as klados first, then as rhiza
             if (path.includes('/kladoi/')) {
-              const kladosId = options.params.path.id;
-              const { manifest } = await getKlados(storage, tip, kladosId);
+              const { manifest } = await getKlados(storage, tip, entityId);
+              return { data: manifest };
+            }
+            if (path.includes('/rhizai/')) {
+              const { manifest } = await getRhiza(storage, tip, entityId);
               return { data: manifest };
             }
             throw new Error(`Unexpected path: ${path}`);
@@ -585,8 +598,8 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
       });
     }
 
-    // Get all klados IDs from flow
-    const allKladosIds = Object.keys(rhizaManifest.properties.flow);
+    // Get all klados IDs from validation results (excludes sub-rhizai)
+    const allKladosIds = Array.from(runtimeValidation.kladoi.keys());
 
     // Build grant info
     const expiresIn = body.expires_in ?? 3600;
@@ -594,20 +607,30 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
 
     // Two-phase: preview vs confirmed
     if (!body.confirm) {
-      const grants = await Promise.all(
-        allKladosIds.map(async (kladosId) => {
-          const klados = runtimeValidation.kladoi.get(kladosId)!;
-          return {
-            klados: { id: kladosId, label: klados.properties.label },
-            actions: klados.properties.actions_required,
-          };
+      // Build grants for kladoi
+      const kladosGrants = Array.from(runtimeValidation.kladoi.entries()).map(
+        ([kladosId, klados]) => ({
+          type: 'klados' as const,
+          id: kladosId,
+          label: klados.properties.label,
+          actions: klados.properties.actions_required,
+        })
+      );
+
+      // Build grants for sub-rhizai (they will recursively grant their own kladoi)
+      const rhizaGrants = Array.from(runtimeValidation.rhizai.entries()).map(
+        ([rhizaId, rhiza]) => ({
+          type: 'rhiza' as const,
+          id: rhizaId,
+          label: rhiza.properties.label,
+          // Sub-rhizai grant their own permissions when invoked
         })
       );
 
       return c.json({
         status: 'pending_confirmation',
         message: `Workflow "${rhizaManifest.properties.label}" will be granted access to target`,
-        grants,
+        grants: [...kladosGrants, ...rhizaGrants],
         expires_at: expiresAt,
       });
     }
@@ -622,7 +645,7 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
       'entity:manage'
     );
 
-    // Grant permissions to all kladoi
+    // Grant permissions to all kladoi in this rhiza
     for (const kladosId of allKladosIds) {
       const klados = runtimeValidation.kladoi.get(kladosId)!;
       await grantKladosPermissions(
@@ -636,6 +659,12 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
         executionContext
       );
     }
+
+    // Note: Sub-rhizai (targets that are rhiza entities) will grant their own
+    // permissions when they are invoked. We don't pre-grant here because:
+    // 1. Sub-rhizai may have dynamic permission requirements
+    // 2. It keeps permission granting scoped to immediate execution
+    // 3. The parent rhiza just invokes the sub-rhiza, which handles its own grants
 
     // Create job collection
     const jobId = `job_${generateId()}`;
@@ -666,13 +695,14 @@ export function createRhizaiRoutes(config: RhizaiRoutesConfig): OpenAPIHono {
       api_base: arkeApiBase,
       expires_at: expiresAt,
       network,
-      // Rhiza context
+      // Rhiza context - klados will fetch rhiza entity itself for flow definition
+      // We only pass the path (how we got here) so it knows which instance it is
+      // if the same klados appears multiple times in the flow
       rhiza: {
         id,
-        flow,
-        position: entryKladosId,
-        log_chain: [],
-        parent: body.parent_context, // If invoked as sub-workflow
+        path: [entryKladosId],  // Path of klados IDs from entry to current
+        parent_logs: [],         // Immediate parent log IDs (empty for entry)
+        // batch is optional, added when part of scatter/gather
       },
     };
 
@@ -1041,8 +1071,8 @@ export interface RhizaProperties {
   label: string;
   description?: string;
   version: string;
-  entry: string; // Klados ID
-  flow: Record<string, FlowStep>; // Klados ID → handoff
+  entry: string; // Entry klados ID (must be klados, not rhiza)
+  flow: Record<string, FlowStep>; // Klados/Rhiza ID → handoff spec (targets can be klados or rhiza)
   status: 'development' | 'active' | 'disabled';
   created_at: string;
   updated_at: string;
@@ -1262,10 +1292,14 @@ export async function deleteRhiza(
 
 | Predicate | Description |
 |-----------|-------------|
-| `received_from` | Log chain: child → parent log |
-| `handed_off_to` | Log chain: parent → child logs |
+| `received_from` | Log chain: child → parent log (only relationship for handoffs) |
 | `runs_klados` | Job collection → klados being executed |
 | `runs_rhiza` | Job collection → rhiza being executed |
+
+**Note on fire-and-forget architecture:** With the simplified handoff model, only `received_from` exists for tracking handoffs. Parents do not track children (no `handed_off_to` predicate). This means:
+- Children always know their parent via `received_from`
+- Parents don't maintain references to children they spawned
+- Status reconstruction uses `received_from` relationships to build the tree
 
 ---
 
@@ -1313,3 +1347,320 @@ export async function deleteRhiza(
 2. **Parallel systems** - Kladoi and agents coexist
 3. **Gradual adoption** - Can create kladoi from existing agents
 4. **Shared infrastructure** - Uses same job collections, permissions, signing
+
+---
+
+## Verification System
+
+Kladoi inherit the same dual verification system used by agents. This ensures:
+1. Only the klados developer can register an endpoint URL
+2. Only Arke can invoke a klados
+
+See `reference/agent-verification.md` for the complete verification system documentation.
+
+### Klados Verification Routes
+
+#### `POST /kladoi/:id/verify`
+
+Two-phase endpoint ownership verification:
+
+```typescript
+// Phase 1: Request verification token
+// POST /kladoi/:id/verify
+// Body: {}
+// Response: { verification_token, agent_id, endpoint, instructions, expires_at }
+
+// Phase 2: Confirm verification
+// POST /kladoi/:id/verify
+// Body: { confirm: true }
+// Response: { verified: true, verified_at } or { verified: false, error, message }
+```
+
+**Route implementation:**
+
+```typescript
+const verifyKladosRoute = arkeRoute({
+  method: 'post',
+  path: '/{id}/verify',
+  action: 'klados:manage',
+  auth: 'required',
+  tags: ['Kladoi'],
+  summary: 'Verify klados endpoint ownership',
+  description: `
+Verify that you control the klados's endpoint URL.
+
+**Two-phase flow:**
+1. Call without \`confirm\` to get a verification token
+2. Deploy \`/.well-known/arke-verification\` endpoint returning the token
+3. Call with \`confirm: true\` to complete verification
+  `.trim(),
+});
+```
+
+### Request Signature Verification
+
+When Arke invokes a klados endpoint, it signs the request using Ed25519:
+
+```
+POST /process
+Content-Type: application/json
+X-Arke-Signature: t=<unix_timestamp>,v1=<base64_signature>
+X-Arke-Request-Id: req_<ulid>
+
+{
+  "job_id": "job_...",
+  "target": "II...",
+  "job_collection": "II...",
+  ...
+}
+```
+
+**Signature format:** `{timestamp}.{JSON_body}`
+
+### Public Key Endpoint
+
+Arke exposes its signing public key at:
+
+```
+GET /.well-known/signing-key
+
+{
+  "public_key": "<base64_ed25519_public_key>",
+  "algorithm": "Ed25519",
+  "key_id": "<key_identifier>"
+}
+```
+
+Kladoi fetch and cache this key (1-hour TTL) to verify incoming requests.
+
+### Verification Properties
+
+The `KladosProperties` includes verification state:
+
+```typescript
+interface KladosProperties {
+  // ... other properties ...
+
+  /** Status - cannot be 'active' without endpoint_verified_at */
+  status: 'development' | 'active' | 'disabled';
+
+  /** When endpoint was verified (ISO 8601) */
+  endpoint_verified_at?: string;
+}
+```
+
+**Verification rules:**
+- New kladoi start with `status: 'development'`
+- Setting `status: 'active'` requires `endpoint_verified_at` to be set
+- Changing the endpoint clears `endpoint_verified_at` and resets status to `development`
+
+### Verification Token Storage
+
+Tokens are stored in D1:
+
+```sql
+CREATE TABLE klados_verification_tokens (
+  klados_id TEXT PRIMARY KEY,
+  token TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+```
+
+- Token prefix: `vt_`
+- Token TTL: 1 hour
+- Tokens are deleted after successful verification
+
+---
+
+## klados-core Package
+
+A new package replaces `agent-core` for klados implementations:
+
+```
+@arke-institute/klados-core/
+├── src/
+│   ├── router.ts       # Standard Hono router factory
+│   ├── verify.ts       # Arke signature verification
+│   ├── types.ts        # TypeScript types
+│   ├── register/       # Registration automation
+│   │   ├── register.ts
+│   │   ├── config.ts
+│   │   └── types.ts
+│   └── index.ts
+└── package.json
+```
+
+### Router Factory
+
+```typescript
+import { createKladosRouter } from '@arke-institute/klados-core';
+
+const app = createKladosRouter({
+  doBindingName: 'KLADOS_JOBS',
+  healthData: (env) => ({
+    accepts: ['file/pdf'],
+    produces: ['text/ocr'],
+  }),
+});
+
+export default app;
+```
+
+The router provides:
+- `GET /health` - Health check
+- `POST /process` - Accept jobs (with signature verification)
+- `GET /status/:job_id` - Job status
+- `GET /.well-known/arke-verification` - Endpoint verification
+
+### Signature Verification
+
+```typescript
+import { verifyArkeSignature } from '@arke-institute/klados-core';
+
+// In /process handler:
+const body = await c.req.text();
+const signatureHeader = c.req.header('X-Arke-Signature');
+
+const result = await verifyArkeSignature(
+  body,
+  signatureHeader,
+  request.api_base
+);
+
+if (!result.valid) {
+  return c.json({ accepted: false, error: result.error }, 401);
+}
+```
+
+### Registration Script
+
+```bash
+# Register klados on test network
+npx klados-register
+
+# Register on production network
+npx klados-register --production
+```
+
+The registration script:
+1. Creates or updates the klados entity
+2. Requests a verification token
+3. Pushes verification secrets to worker
+4. Waits for worker deployment
+5. Confirms verification
+6. Activates the klados
+7. Creates and pushes API key
+
+### Environment Variables
+
+```typescript
+interface KladosEnv {
+  // Required
+  ARKE_API_KEY: string;          // Klados API key for calling Arke
+
+  // Set by registration during verification
+  ARKE_VERIFY_TOKEN?: string;    // Temporary verification token
+  ARKE_VERIFY_KLADOS_ID?: string; // Klados ID for verification
+
+  // Informational
+  KLADOS_ID?: string;            // Klados entity ID
+  KLADOS_VERSION?: string;       // Deployment version
+}
+```
+
+---
+
+## Porting from agent-core to klados-core
+
+| agent-core | klados-core | Notes |
+|------------|-------------|-------|
+| `createAgentRouter()` | `createKladosRouter()` | Same API |
+| `verifyArkeSignature()` | `verifyArkeSignature()` | Unchanged |
+| `ARKE_VERIFY_AGENT_ID` | `ARKE_VERIFY_KLADOS_ID` | Renamed env var |
+| `AGENT_ID` | `KLADOS_ID` | Renamed env var |
+| `BaseAgentEnv` | `BaseKladosEnv` | Same structure |
+| `AgentJobRequest` | `KladosRequest` | Extended with `rhiza` context |
+
+### Request Type Changes
+
+```typescript
+// Old (agent-core)
+interface AgentJobRequest {
+  job_id: string;
+  target: string;
+  job_collection: string;
+  input?: Record<string, unknown>;
+  api_base: string;
+  expires_at: string;
+  network: 'test' | 'main';
+}
+
+// New (klados-core)
+interface KladosRequest {
+  // Same base fields
+  job_id: string;
+  target: string;
+  job_collection: string;
+  input?: Record<string, unknown>;
+  api_base: string;
+  expires_at: string;
+  network: 'test' | 'main';
+
+  // NEW: Workflow context (present when invoked as part of rhiza)
+  rhiza?: {
+    id: string;           // Rhiza entity ID
+    path: string[];       // Path of klados IDs from entry
+    parent_logs: string[]; // Parent log IDs for chain
+    batch?: {             // Present during scatter/gather
+      id: string;
+      index: number;
+      total: number;
+    };
+  };
+}
+```
+
+### Handoff Integration
+
+When a klados completes in workflow context, it uses the rhiza SDK to determine and execute handoffs:
+
+```typescript
+import { getNextHandoff, executeHandoff } from '@arke-institute/rhiza';
+
+// After processing...
+if (request.rhiza) {
+  // Fetch rhiza entity to get flow definition
+  const rhiza = await client.rhizai.get(request.rhiza.id);
+
+  // Determine next step from flow
+  const current = request.rhiza.path[request.rhiza.path.length - 1];
+  const handoff = getNextHandoff(rhiza.flow, current, outputs);
+
+  if (!handoff.done) {
+    // Execute handoff (creates log entry, invokes next klados)
+    await executeHandoff(client, request, handoff, outputs);
+  }
+}
+```
+
+### Verification Endpoint
+
+The `/.well-known/arke-verification` endpoint uses klados-specific env vars:
+
+```typescript
+app.get('/.well-known/arke-verification', (c) => {
+  const token = c.env.ARKE_VERIFY_TOKEN;
+  const kladosId = c.env.ARKE_VERIFY_KLADOS_ID || c.env.KLADOS_ID;
+
+  if (!token) {
+    return c.json({ error: 'Verification not configured' }, 404);
+  }
+
+  return c.json({
+    verification_token: token,
+    agent_id: kladosId,  // Note: field name stays "agent_id" for API compatibility
+    timestamp: Date.now(),
+  });
+});
+```
