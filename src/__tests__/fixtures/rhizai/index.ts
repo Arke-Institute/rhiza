@@ -11,7 +11,12 @@
 
 import type { RhizaProperties, FlowStep } from '../../../types';
 import { ref } from '../../../types';
-import type { MockRhiza } from '../mock-client';
+
+/** Simple fixture type for tests */
+interface MockRhiza {
+  properties: RhizaProperties;
+  cid: string;
+}
 
 // ============================================================================
 // Linear Workflow

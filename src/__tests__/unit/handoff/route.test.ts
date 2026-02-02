@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { evaluateWhere, matchRoute } from '../../../handoff/route';
 import type { WhereCondition, RouteRule } from '../../../types';
+import { ref } from '../../../types';
 
 describe('Route Matching', () => {
   describe('evaluateWhere', () => {
@@ -262,9 +263,9 @@ describe('Route Matching', () => {
 
   describe('matchRoute', () => {
     const rules: RouteRule[] = [
-      { where: { property: 'type', equals: 'pdf' }, target: 'pdf_handler' },
-      { where: { property: 'type', equals: 'image' }, target: 'image_handler' },
-      { where: { property: 'type', equals: 'text' }, target: 'text_handler' },
+      { where: { property: 'type', equals: 'pdf' }, target: ref('pdf_handler') },
+      { where: { property: 'type', equals: 'image' }, target: ref('image_handler') },
+      { where: { property: 'type', equals: 'text' }, target: ref('text_handler') },
     ];
 
     it('returns first matching rule', () => {
@@ -272,7 +273,7 @@ describe('Route Matching', () => {
 
       const result = matchRoute(properties, rules);
 
-      expect(result).toEqual({ where: { property: 'type', equals: 'pdf' }, target: 'pdf_handler' });
+      expect(result?.target.pi).toBe('pdf_handler');
     });
 
     it('returns second rule when first does not match', () => {
@@ -280,7 +281,7 @@ describe('Route Matching', () => {
 
       const result = matchRoute(properties, rules);
 
-      expect(result).toEqual({ where: { property: 'type', equals: 'image' }, target: 'image_handler' });
+      expect(result?.target.pi).toBe('image_handler');
     });
 
     it('returns null when no rules match', () => {
@@ -301,15 +302,15 @@ describe('Route Matching', () => {
 
     it('returns first matching rule when multiple match', () => {
       const overlappingRules: RouteRule[] = [
-        { where: { property: 'priority', equals: 'high' }, target: 'priority_handler' },
-        { where: { property: 'type', equals: 'pdf' }, target: 'pdf_handler' },
+        { where: { property: 'priority', equals: 'high' }, target: ref('priority_handler') },
+        { where: { property: 'type', equals: 'pdf' }, target: ref('pdf_handler') },
       ];
       const properties = { type: 'pdf', priority: 'high' };
 
       const result = matchRoute(properties, overlappingRules);
 
       // First rule matches first
-      expect(result?.target).toBe('priority_handler');
+      expect(result?.target.pi).toBe('priority_handler');
     });
 
     it('works with complex AND/OR conditions', () => {
@@ -321,13 +322,13 @@ describe('Route Matching', () => {
               { or: [{ property: 'ext', equals: 'jpg' }, { property: 'ext', equals: 'png' }] },
             ],
           },
-          target: 'image_handler',
+          target: ref('image_handler'),
         },
-        { where: { property: 'type', equals: 'file' }, target: 'default_file_handler' },
+        { where: { property: 'type', equals: 'file' }, target: ref('default_file_handler') },
       ];
 
-      expect(matchRoute({ type: 'file', ext: 'jpg' }, complexRules)?.target).toBe('image_handler');
-      expect(matchRoute({ type: 'file', ext: 'pdf' }, complexRules)?.target).toBe('default_file_handler');
+      expect(matchRoute({ type: 'file', ext: 'jpg' }, complexRules)?.target.pi).toBe('image_handler');
+      expect(matchRoute({ type: 'file', ext: 'pdf' }, complexRules)?.target.pi).toBe('default_file_handler');
     });
   });
 });

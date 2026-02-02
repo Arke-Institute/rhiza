@@ -1,11 +1,11 @@
 /**
  * Gather Operations
  *
- * Handles fan-in (gather) operations that collect scattered outputs
+ * Pure functions for fan-in (gather) operations that collect scattered outputs
  * and determine when all slots are complete for aggregation.
  */
 
-import type { ScatterBatchEntity, BatchSlot } from './scatter';
+import type { BatchEntity, BatchSlot, BatchProperties } from '../types/batch';
 
 /**
  * Error information for a failed slot
@@ -20,7 +20,7 @@ export interface SlotError {
  * Result of completing a batch slot
  */
 export interface BatchSlotResult {
-  batch: ScatterBatchEntity;
+  batch: BatchEntity;
   isLast: boolean;
   allOutputs?: string[][];
 }
@@ -29,7 +29,7 @@ export interface BatchSlotResult {
  * Result of erroring a batch slot
  */
 export interface BatchSlotErrorResult {
-  batch: ScatterBatchEntity;
+  batch: BatchEntity;
   isTerminal: boolean;
   errors?: Array<{ slotIndex: number; error: SlotError }>;
 }
@@ -57,7 +57,7 @@ function collectErrors(slots: BatchSlot[]): Array<{ slotIndex: number; error: Sl
     if (slots[i].status === 'error' && slots[i].error) {
       errors.push({
         slotIndex: i,
-        error: slots[i].error!,
+        error: slots[i].error as SlotError,
       });
     }
   }
@@ -75,41 +75,49 @@ function collectErrors(slots: BatchSlot[]): Array<{ slotIndex: number; error: Sl
  * @param outputIds - The output entity IDs produced by this slot
  * @returns Updated batch and whether this was the last slot
  */
-export async function completeBatchSlot(
-  batch: ScatterBatchEntity,
+export function completeBatchSlot(
+  batch: BatchEntity,
   slotIndex: number,
   outputIds: string[]
-): Promise<BatchSlotResult> {
-  // Clone the batch to avoid mutation
-  const updatedBatch: ScatterBatchEntity = {
-    ...batch,
-    slots: [...batch.slots],
-  };
+): BatchSlotResult {
+  const props = batch.properties;
+
+  // Clone slots array
+  const updatedSlots: BatchSlot[] = [...props.slots];
 
   // Update the slot
-  updatedBatch.slots[slotIndex] = {
+  updatedSlots[slotIndex] = {
+    ...updatedSlots[slotIndex],
     status: 'complete',
-    outputIds,
+    output_ids: outputIds,
+    completed_at: new Date().toISOString(),
   };
 
-  // Increment completed count
-  updatedBatch.completed = batch.completed + 1;
-
   // Check if all slots are terminal
-  const allTerminal = allSlotsTerminal(updatedBatch.slots);
-  const hasAnyErrors = hasErrors(updatedBatch.slots);
+  const allTerminal = allSlotsTerminal(updatedSlots);
+  const hasAnyErrors = hasErrors(updatedSlots);
 
-  // Update batch status
-  if (allTerminal) {
-    updatedBatch.status = hasAnyErrors ? 'error' : 'complete';
-  }
+  // Build updated properties
+  const updatedProperties: BatchProperties = {
+    ...props,
+    slots: updatedSlots,
+    completed: props.completed + 1,
+    status: allTerminal ? (hasAnyErrors ? 'error' : 'complete') : props.status,
+    completed_at: allTerminal ? new Date().toISOString() : undefined,
+  };
 
-  // If this is the last slot, collect all outputs in order
+  // Build updated batch
+  const updatedBatch: BatchEntity = {
+    ...batch,
+    properties: updatedProperties,
+  };
+
+  // If this is the last slot (all complete, no errors), collect all outputs in order
   const isLast = allTerminal && !hasAnyErrors;
   let allOutputs: string[][] | undefined;
 
   if (isLast) {
-    allOutputs = updatedBatch.slots.map((slot) => slot.outputIds ?? []);
+    allOutputs = updatedSlots.map((slot) => slot.output_ids ?? []);
   }
 
   return {
@@ -130,35 +138,48 @@ export async function completeBatchSlot(
  * @param error - The error information
  * @returns Updated batch and terminal status
  */
-export async function errorBatchSlot(
-  batch: ScatterBatchEntity,
+export function errorBatchSlot(
+  batch: BatchEntity,
   slotIndex: number,
   error: SlotError
-): Promise<BatchSlotErrorResult> {
-  // Clone the batch to avoid mutation
-  const updatedBatch: ScatterBatchEntity = {
-    ...batch,
-    slots: [...batch.slots],
-  };
+): BatchSlotErrorResult {
+  const props = batch.properties;
+
+  // Clone slots array
+  const updatedSlots: BatchSlot[] = [...props.slots];
 
   // Update the slot with error
-  updatedBatch.slots[slotIndex] = {
+  updatedSlots[slotIndex] = {
+    ...updatedSlots[slotIndex],
     status: 'error',
-    error,
+    error: {
+      code: error.code,
+      message: error.message,
+    },
+    completed_at: new Date().toISOString(),
   };
 
   // Check if all slots are terminal
-  const allTerminal = allSlotsTerminal(updatedBatch.slots);
+  const allTerminal = allSlotsTerminal(updatedSlots);
 
-  // Update batch status if terminal
-  if (allTerminal) {
-    updatedBatch.status = 'error';
-  }
+  // Build updated properties
+  const updatedProperties: BatchProperties = {
+    ...props,
+    slots: updatedSlots,
+    status: allTerminal ? 'error' : props.status,
+    completed_at: allTerminal ? new Date().toISOString() : undefined,
+  };
+
+  // Build updated batch
+  const updatedBatch: BatchEntity = {
+    ...batch,
+    properties: updatedProperties,
+  };
 
   // Collect errors if terminal
   let errors: Array<{ slotIndex: number; error: SlotError }> | undefined;
   if (allTerminal) {
-    errors = collectErrors(updatedBatch.slots);
+    errors = collectErrors(updatedSlots);
   }
 
   return {

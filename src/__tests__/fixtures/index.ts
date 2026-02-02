@@ -4,20 +4,6 @@
  * Re-exports all fixtures for easy importing in tests
  */
 
-// Mock client
-export {
-  createMockClient,
-  type MockClientConfig,
-  type MockArkeClient,
-  type MockKlados,
-  type MockRhiza,
-  type MockEntity,
-  type CreatedEntity,
-  type UpdatedEntity,
-  type InvokedKlados,
-  type InvokedRhiza,
-} from './mock-client';
-
 // Klados fixtures
 export {
   producerKlados,

@@ -2,6 +2,7 @@
  * Validation Module
  *
  * Exports validation functions for rhiza and klados entities.
+ * These are pure validation functions - no API calls.
  */
 
 export {
@@ -14,8 +15,3 @@ export {
 export {
   validateRhizaProperties,
 } from './validate-rhiza';
-
-export {
-  validateRhizaRuntime,
-  type RuntimeValidationResult,
-} from './validate-runtime';

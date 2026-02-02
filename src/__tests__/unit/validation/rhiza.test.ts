@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { validateRhizaProperties } from '../../../validation';
 import { ref } from '../../../types';
+import type { RouteRule } from '../../../types';
 import {
   linearRhizaProperties,
   scatterGatherRhizaProperties,
@@ -412,7 +413,7 @@ describe('validateRhizaProperties', () => {
           'II01klados_a': {
             then: {
               pass: ref('II01klados_b', { type: 'klados' }),
-              route: [{ target: ref('II01klados_c', { type: 'klados' }) }] as unknown as Array<{ where: { property: string; equals: string }; target: string }>,
+              route: [{ target: ref('II01klados_c', { type: 'klados' }) }] as unknown as RouteRule[],
             },
           },
           'II01klados_b': { then: { done: true } },
@@ -438,7 +439,7 @@ describe('validateRhizaProperties', () => {
           'II01klados_a': {
             then: {
               pass: ref('II01klados_b', { type: 'klados' }),
-              route: [{ where: { property: 'type', equals: 'test' } }] as unknown as Array<{ where: { property: string; equals: string }; target: string }>,
+              route: [{ where: { property: 'type', equals: 'test' } }] as unknown as RouteRule[],
             },
           },
           'II01klados_b': { then: { done: true } },

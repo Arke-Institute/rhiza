@@ -1,12 +1,11 @@
 /**
  * Target Resolution
  *
- * Resolves targets from flow steps by evaluating route rules,
- * and discovers target types by fetching from the API.
+ * Resolves targets from flow steps by evaluating route rules.
+ * Pure function - no API calls.
  */
 
 import type { ThenSpec, EntityRef } from '../types';
-import type { MockArkeClient } from '../__tests__/fixtures/mock-client';
 import { matchRoute } from './route';
 
 /**
@@ -56,48 +55,4 @@ export function resolveTarget(
 
   // No route matched - return default
   return defaultTarget;
-}
-
-/**
- * Discover the type of a target
- *
- * If the EntityRef has a type hint, returns it directly (no API call).
- * Otherwise, tries to fetch as klados first, then as rhiza.
- *
- * @param client - The Arke client
- * @param target - The target EntityRef
- * @returns 'klados' or 'rhiza'
- * @throws Error if target not found and no type hint
- */
-export async function discoverTargetType(
-  client: MockArkeClient,
-  target: EntityRef
-): Promise<'klados' | 'rhiza'> {
-  // Fast path: type hint provided
-  if (target.type === 'klados' || target.type === 'rhiza') {
-    return target.type;
-  }
-
-  // Fallback: discover via API using target.pi
-  const targetId = target.pi;
-
-  // Try as klados first
-  const kladosResult = await client.api.GET('/kladoi/{id}', {
-    params: { path: { id: targetId } },
-  });
-
-  if (!kladosResult.error && kladosResult.data) {
-    return 'klados';
-  }
-
-  // Try as rhiza
-  const rhizaResult = await client.api.GET('/rhizai/{id}', {
-    params: { path: { id: targetId } },
-  });
-
-  if (!rhizaResult.error && rhizaResult.data) {
-    return 'rhiza';
-  }
-
-  throw new Error(`Target '${targetId}' not found as klados or rhiza`);
 }

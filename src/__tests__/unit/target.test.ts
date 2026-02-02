@@ -1,21 +1,16 @@
 /**
- * Target Discovery Tests
+ * Target Resolution Tests
  *
- * Tests for resolving targets from flow steps and discovering target types.
- * Target resolution evaluates route rules to determine the actual target,
- * while type discovery determines if a target is a klados or rhiza.
+ * Tests for resolving targets from flow steps using route rules.
+ * Pure function - no API calls.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { resolveTarget, discoverTargetType } from '../../handoff/target';
-import { createMockClient } from '../fixtures/mock-client';
-import { allMockKladoi } from '../fixtures/kladoi';
-import { allMockRhizai } from '../fixtures/rhizai';
+import { describe, it, expect } from 'vitest';
+import { resolveTarget } from '../../handoff/target';
 import type { ThenSpec } from '../../types';
 import { ref } from '../../types';
-import type { MockArkeClient } from '../fixtures/mock-client';
 
-describe('Target Discovery', () => {
+describe('Target Resolution', () => {
   describe('resolveTarget', () => {
     describe('without route rules', () => {
       it('returns default target for pass', () => {
@@ -146,61 +141,6 @@ describe('Target Discovery', () => {
 
         expect(result?.pi).toBe('default_handler');
       });
-    });
-  });
-
-  describe('discoverTargetType', () => {
-    let client: MockArkeClient;
-
-    beforeEach(() => {
-      client = createMockClient({
-        kladoi: allMockKladoi,
-        rhizai: allMockRhizai,
-      });
-    });
-
-    it('returns klados when target is klados entity', async () => {
-      const result = await discoverTargetType(client, ref('II01klados_producer'));
-
-      expect(result).toBe('klados');
-    });
-
-    it('returns rhiza when target is rhiza entity', async () => {
-      const result = await discoverTargetType(client, ref('II01rhiza_linear'));
-
-      expect(result).toBe('rhiza');
-    });
-
-    it('throws when target not found', async () => {
-      await expect(discoverTargetType(client, ref('nonexistent_id'))).rejects.toThrow(
-        /not found/
-      );
-    });
-
-    it('correctly identifies different kladoi', async () => {
-      expect(await discoverTargetType(client, ref('II01klados_worker'))).toBe('klados');
-      expect(await discoverTargetType(client, ref('II01klados_aggregator'))).toBe('klados');
-    });
-
-    it('correctly identifies different rhizai', async () => {
-      expect(await discoverTargetType(client, ref('II01rhiza_scatter_gather'))).toBe('rhiza');
-      expect(await discoverTargetType(client, ref('II01rhiza_conditional'))).toBe('rhiza');
-    });
-
-    it('handles inactive klados (still returns type)', async () => {
-      // Even inactive kladoi should be discoverable - active status is validated separately
-      const result = await discoverTargetType(client, ref('II01klados_inactive'));
-
-      expect(result).toBe('klados');
-    });
-
-    it('skips API call when type hint is provided', async () => {
-      // When type hint is provided, should return immediately without API call
-      const result = await discoverTargetType(client, ref('any_id', { type: 'klados' }));
-      expect(result).toBe('klados');
-
-      const result2 = await discoverTargetType(client, ref('any_other_id', { type: 'rhiza' }));
-      expect(result2).toBe('rhiza');
     });
   });
 });

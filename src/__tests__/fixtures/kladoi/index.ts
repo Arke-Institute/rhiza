@@ -11,7 +11,12 @@
  */
 
 import type { KladosProperties } from '../../../types';
-import type { MockKlados } from '../mock-client';
+
+/** Simple fixture type for tests */
+interface MockKlados {
+  properties: KladosProperties;
+  cid: string;
+}
 
 // ============================================================================
 // Valid Kladoi

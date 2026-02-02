@@ -1,7 +1,8 @@
 /**
  * @arke-institute/rhiza
  *
- * Workflow protocol for Arke - cascading handoff pattern for distributed actions.
+ * Types and pure logic library for Arke workflow protocol.
+ * Workers use rhiza for types + pure logic, SDK for API calls.
  *
  * Naming:
  * - Rhiza (ῥίζα) = root, the workflow definition
@@ -88,23 +89,13 @@ export {
 
 export { validateRhizaProperties } from './validation/validate-rhiza';
 
-export {
-  validateRhizaRuntime,
-  type RuntimeValidationResult,
-} from './validation/validate-runtime';
-
 // ============================================================================
-// Handoff - Route matching, scatter/gather, interpretation
+// Handoff - Pure functions for route matching, target resolution, gather
 // ============================================================================
 
 export { evaluateWhere, matchRoute } from './handoff/route';
-export { resolveTarget, discoverTargetType } from './handoff/target';
-export {
-  findGatherTarget,
-  createScatterBatch,
-  type CreateScatterParams,
-  type ScatterResult,
-} from './handoff/scatter';
+export { resolveTarget } from './handoff/target';
+export { findGatherTarget } from './handoff/scatter';
 export {
   completeBatchSlot,
   errorBatchSlot,
@@ -112,114 +103,3 @@ export {
   type BatchSlotErrorResult,
   type SlotError,
 } from './handoff/gather';
-export {
-  interpretThen,
-  type InterpretContext,
-  type InterpretResult,
-} from './handoff/interpret';
-
-// ============================================================================
-// Traverse - Log chain traversal utilities
-// ============================================================================
-
-export {
-  findLeaves,
-  findErrorLeaves,
-  buildLogTree,
-  type ErrorLeaf,
-  type LogNode,
-} from './traverse';
-
-// ============================================================================
-// Resume - Workflow resumption
-// ============================================================================
-
-export {
-  resumeWorkflow,
-  canResume,
-  type ResumeOptions,
-  type ResumedJob,
-  type ResumeResult,
-  type ErrorSummary,
-  type CanResumeResult,
-} from './resume';
-
-// ============================================================================
-// Status - Build status from logs
-// ============================================================================
-
-export {
-  buildStatusFromLogs,
-  type WorkflowStatusType,
-  type ProgressCounters,
-  type StatusError,
-  type WorkflowStatus,
-} from './status';
-
-// Signature utilities (TODO: implement)
-// export * from './signature';
-
-// ============================================================================
-// Client - API client interface and mock implementation
-// ============================================================================
-
-export type {
-  // Interface and result type
-  RhizaClient,
-  ApiResult,
-
-  // Error types
-  ApiError,
-  ValidationApiError,
-
-  // Entity types
-  RelationshipSpec,
-  CreateEntityParams,
-  UpdateEntityParams,
-  EntityResponse,
-
-  // Klados types
-  CreateKladosParams,
-  UpdateKladosParams,
-  RhizaContext as ClientRhizaContext,
-  InvokeKladosParams,
-
-  // Rhiza types
-  CreateRhizaParams,
-  UpdateRhizaParams,
-  InvokeRhizaParams,
-
-  // Invoke responses
-  GrantInfo,
-  InvokePendingResponse,
-  InvokeStartedResponse,
-  InvokeRejectedResponse,
-  InvokeResponse,
-
-  // Workflow status
-  ProgressCounters as ClientProgressCounters,
-  WorkflowErrorInfo,
-  WorkflowStatusResponse as ClientWorkflowStatusResponse,
-
-  // Resume
-  ResumeParams,
-  ResumedJobInfo,
-  ResumeResponse,
-
-  // Log types
-  LogErrorInfo,
-  CreateLogParams,
-  UpdateLogParams,
-
-  // Batch types
-  CreateBatchParams,
-  UpdateBatchParams,
-
-  // Verification
-  VerifyTokenResponse,
-  VerifySuccessResponse,
-  VerifyFailureResponse,
-  VerifyResponse,
-} from './client';
-
-export { MockRhizaClient, createMockRhizaClient } from './client';
