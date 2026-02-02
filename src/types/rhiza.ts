@@ -97,8 +97,8 @@ export type WhereCondition =
 export interface WhereEquals {
   /** Property name to check (e.g., "type", "content_type") */
   property: string;
-  /** Value to match */
-  equals: string | number | boolean;
+  /** Value to match (null to check for absent/null properties) */
+  equals: string | number | boolean | null;
 }
 
 export interface WhereAnd {

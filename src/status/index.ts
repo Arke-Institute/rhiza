@@ -68,13 +68,14 @@ export function buildStatusFromLogs(logs: KladosLogEntry[]): WorkflowStatus {
     };
   }
 
-  // Get rhiza ID from first log
-  const rhizaId = logs[0].rhiza_id;
+  // Get rhiza ID from first log (empty string if not a workflow execution)
+  const rhizaId = logs[0].rhiza_id ?? '';
 
   // Count by status
+  // Note: Log entries don't have a 'pending' state - they're created when running starts
   const progress: ProgressCounters = {
     total: logs.length,
-    pending: logs.filter((l) => l.status === 'pending').length,
+    pending: 0, // Logs are created when running starts, so never pending
     running: logs.filter((l) => l.status === 'running').length,
     done: logs.filter((l) => l.status === 'done').length,
     error: logs.filter((l) => l.status === 'error').length,
@@ -131,11 +132,6 @@ function determineOverallStatus(leaves: KladosLogEntry[]): WorkflowStatusType {
   // If any leaf is error, workflow has errors
   if (leaves.some((l) => l.status === 'error')) {
     return 'error';
-  }
-
-  // If any leaf is pending, workflow is pending/running
-  if (leaves.some((l) => l.status === 'pending')) {
-    return 'running';
   }
 
   // All leaves are done

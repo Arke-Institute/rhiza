@@ -5,25 +5,11 @@
  * and trigger the aggregator when complete.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  completeBatchSlot,
-  errorBatchSlot,
-  type BatchSlotResult,
-} from '../../../handoff/gather';
-import { createMockClient } from '../../fixtures/mock-client';
-import { scatterGatherKladoi } from '../../fixtures/kladoi';
+import { describe, it, expect } from 'vitest';
+import { completeBatchSlot, errorBatchSlot } from '../../../handoff/gather';
 import type { ScatterBatchEntity, BatchSlot } from '../../../handoff/scatter';
-import type { MockArkeClient } from '../../fixtures/mock-client';
 
 describe('Gather', () => {
-  let client: MockArkeClient;
-
-  beforeEach(() => {
-    client = createMockClient({
-      kladoi: scatterGatherKladoi,
-    });
-  });
 
   function createTestBatch(total: number, completedSlots: number[] = []): ScatterBatchEntity {
     const slots: BatchSlot[] = [];

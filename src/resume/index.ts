@@ -7,7 +7,7 @@
 
 import type { KladosLogEntry } from '../types';
 import type { MockArkeClient } from '../__tests__/fixtures/mock-client';
-import { findErrorLeaves, type ErrorLeaf } from '../traverse';
+import { findErrorLeaves } from '../traverse';
 
 /**
  * Options for resuming a workflow

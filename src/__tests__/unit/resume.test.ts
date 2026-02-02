@@ -6,12 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  resumeWorkflow,
-  canResume,
-  type ResumeResult,
-  type CanResumeResult,
-} from '../../resume';
+import { resumeWorkflow, canResume } from '../../resume';
 import { createMockClient } from '../fixtures/mock-client';
 import { scatterGatherKladoi } from '../fixtures/kladoi';
 import {
@@ -107,7 +102,7 @@ describe('Resume', () => {
     });
 
     it('preserves target entity from original request', async () => {
-      const result = await resumeWorkflow(client, partialErrorLogs);
+      await resumeWorkflow(client, partialErrorLogs);
 
       const invoked = client.getInvokedKladoi();
       // Should target the same entity as the original failed request

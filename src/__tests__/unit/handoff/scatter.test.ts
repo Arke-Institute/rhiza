@@ -6,11 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  findGatherTarget,
-  createScatterBatch,
-  type ScatterResult,
-} from '../../../handoff/scatter';
+import { findGatherTarget, createScatterBatch } from '../../../handoff/scatter';
 import { createMockClient } from '../../fixtures/mock-client';
 import { scatterGatherKladoi } from '../../fixtures/kladoi';
 import { scatterGatherFlow } from '../../fixtures/rhizai';

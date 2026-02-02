@@ -177,9 +177,9 @@ function validateThen(
 function validateRouteRules(
   kladosId: string,
   routes: RouteRule[],
-  flow: Record<string, FlowStep>,
+  _flow: Record<string, FlowStep>,
   errors: ValidationError[],
-  warnings: ValidationWarning[]
+  _warnings: ValidationWarning[]
 ): void {
   for (let i = 0; i < routes.length; i++) {
     const rule = routes[i];

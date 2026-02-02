@@ -481,7 +481,7 @@ describe('validateRhizaRuntime', () => {
         entry: 'II01klados_a',
         flow: {
           'II01klados_a': { then: { pass: 'II01rhiza_sub' } },
-          'II01rhiza_sub': { then: { done: true } }, // This is actually a rhiza reference
+          'II01rhiza_sub': { then: { done: true as const } }, // This is actually a rhiza reference
         },
         status: 'active' as const,
       };
@@ -497,7 +497,7 @@ describe('validateRhizaRuntime', () => {
               version: '1.0.0',
               entry: 'II01klados_sub_a',
               flow: {
-                'II01klados_sub_a': { then: { done: true } },
+                'II01klados_sub_a': { then: { done: true as const } },
               },
               status: 'active',
             },
@@ -518,7 +518,7 @@ describe('validateRhizaRuntime', () => {
         entry: 'II01klados_a',
         flow: {
           'II01klados_a': { then: { pass: 'II01rhiza_sub' } },
-          'II01rhiza_sub': { then: { done: true } },
+          'II01rhiza_sub': { then: { done: true as const } },
         },
         status: 'active' as const,
       };
@@ -534,7 +534,7 @@ describe('validateRhizaRuntime', () => {
               version: '1.0.0',
               entry: 'II01klados_sub_a',
               flow: {
-                'II01klados_sub_a': { then: { done: true } },
+                'II01klados_sub_a': { then: { done: true as const } },
               },
               status: 'disabled', // Not active!
             },
@@ -573,9 +573,9 @@ describe('validateRhizaRuntime', () => {
               ],
             },
           },
-          'II01klados_default': { then: { done: true } },
-          'II01klados_pdf': { then: { done: true } },
-          'II01klados_image': { then: { done: true } },
+          'II01klados_default': { then: { done: true as const } },
+          'II01klados_pdf': { then: { done: true as const } },
+          'II01klados_image': { then: { done: true as const } },
         },
         status: 'active' as const,
       };
@@ -609,8 +609,8 @@ describe('validateRhizaRuntime', () => {
               ],
             },
           },
-          'II01klados_default': { then: { done: true } },
-          'II01klados_missing': { then: { done: true } },
+          'II01klados_default': { then: { done: true as const } },
+          'II01klados_missing': { then: { done: true as const } },
         },
         status: 'active' as const,
       };
@@ -645,7 +645,7 @@ describe('validateRhizaRuntime', () => {
         version: '1.0.0',
         entry: 'II01klados_only',
         flow: {
-          'II01klados_only': { then: { done: true } },
+          'II01klados_only': { then: { done: true as const } },
         },
         status: 'active' as const,
       };

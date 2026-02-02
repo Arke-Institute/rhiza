@@ -7,13 +7,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  interpretThen,
-  type InterpretResult,
-  type InterpretContext,
-} from '../../../handoff/interpret';
+import { interpretThen, type InterpretContext } from '../../../handoff/interpret';
 import { createMockClient } from '../../fixtures/mock-client';
-import { scatterGatherKladoi, allMockKladoi } from '../../fixtures/kladoi';
+import { allMockKladoi } from '../../fixtures/kladoi';
 import { allMockRhizai, scatterGatherFlow } from '../../fixtures/rhizai';
 import type { ThenSpec } from '../../../types';
 import type { MockArkeClient } from '../../fixtures/mock-client';

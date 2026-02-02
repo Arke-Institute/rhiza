@@ -21,7 +21,6 @@ import {
   runningWorkflowLogs,
   singleNodeLogs,
 } from '../fixtures/logs';
-import type { KladosLogEntry } from '../../types';
 
 describe('Log Chain Traversal', () => {
   describe('findLeaves', () => {

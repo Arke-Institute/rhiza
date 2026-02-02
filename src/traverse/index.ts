@@ -49,7 +49,6 @@ export function findLeaves(logs: KladosLogEntry[]): KladosLogEntry[] {
   }
 
   // Leaves are logs that are not parents of any other log
-  const allIds = new Set(logs.map((l) => l.id));
   const leaves = logs.filter((log) => {
     // A leaf is not referenced as a parent by any other log
     return !logs.some(

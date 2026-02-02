@@ -570,10 +570,10 @@ export function createMockClient(config: MockClientConfig = {}): MockArkeClient 
 
   return {
     api: {
-      GET: handleGet,
-      POST: handlePost,
-      PUT: handlePut,
-      DELETE: handleDelete,
+      GET: handleGet as MockArkeClient['api']['GET'],
+      POST: handlePost as MockArkeClient['api']['POST'],
+      PUT: handlePut as MockArkeClient['api']['PUT'],
+      DELETE: handleDelete as MockArkeClient['api']['DELETE'],
     },
 
     invokeKlados: (kladosId: string, request: Record<string, unknown>) => {

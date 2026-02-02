@@ -6,10 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  buildStatusFromLogs,
-  type WorkflowStatus,
-} from '../../status';
+import { buildStatusFromLogs } from '../../status';
 import {
   successfulLinearLogs,
   successfulScatterGatherLogs,
