@@ -6,7 +6,7 @@
  * to pass, scatter, gather, or mark as done.
  */
 
-import type { ThenSpec, FlowStep } from '../types';
+import type { ThenSpec, FlowStep, EntityRef, RouteRule } from '../types';
 import type { MockArkeClient } from '../__tests__/fixtures/mock-client';
 import { resolveTarget, discoverTargetType } from './target';
 import {
@@ -116,27 +116,27 @@ export async function interpretThen(
  */
 async function handlePass(
   client: MockArkeClient,
-  then: { pass: string; route?: Array<{ where: import('../types').WhereCondition; target: string }> },
+  then: { pass: EntityRef; route?: RouteRule[] },
   context: InterpretContext
 ): Promise<InterpretResult> {
   // Resolve target (with routing if applicable)
-  const targetId = resolveTarget(then, context.outputProperties ?? {});
+  const targetRef = resolveTarget(then, context.outputProperties ?? {});
 
-  if (!targetId) {
+  if (!targetRef) {
     throw new Error('Failed to resolve target for pass handoff');
   }
 
-  // Discover target type
-  const targetType = await discoverTargetType(client, targetId);
+  // Discover target type (uses type hint if available)
+  const targetType = await discoverTargetType(client, targetRef);
 
   return {
     action: 'pass',
-    target: targetId,
+    target: targetRef.pi,
     targetType,
     outputs: context.outputs,
     handoffRecord: {
       type: 'pass',
-      target: targetId,
+      target: targetRef.pi,
       targetType,
     },
   };
@@ -147,32 +147,34 @@ async function handlePass(
  */
 async function handleScatter(
   client: MockArkeClient,
-  then: { scatter: string; route?: Array<{ where: import('../types').WhereCondition; target: string }> },
+  then: { scatter: EntityRef; route?: RouteRule[] },
   context: InterpretContext
 ): Promise<InterpretResult> {
   // Resolve target (with routing if applicable)
-  const targetId = resolveTarget(then, context.outputProperties ?? {});
+  const targetRef = resolveTarget(then, context.outputProperties ?? {});
 
-  if (!targetId) {
+  if (!targetRef) {
     throw new Error('Failed to resolve target for scatter handoff');
   }
 
-  // Find the gather target from the worker's flow step
-  const gatherTargetId = findGatherTarget(context.flow, targetId);
+  const targetId = targetRef.pi;
 
-  if (!gatherTargetId && context.outputs.length > 0) {
+  // Find the gather target from the worker's flow step
+  const gatherTargetRef = findGatherTarget(context.flow, targetId);
+
+  if (!gatherTargetRef && context.outputs.length > 0) {
     throw new Error(`Scatter target '${targetId}' does not have a gather handoff`);
   }
 
-  // Discover target type
-  const targetType = await discoverTargetType(client, targetId);
+  // Discover target type (uses type hint if available)
+  const targetType = await discoverTargetType(client, targetRef);
 
   // Create the scatter batch
   const scatterResult = await createScatterBatch(client, {
     rhizaId: context.rhizaId,
     sourceKladosId: context.kladosId,
     targetKladosId: targetId,
-    gatherTargetId: gatherTargetId ?? '',
+    gatherTargetId: gatherTargetRef?.pi ?? '',
     outputs: context.outputs,
     parentJobId: context.jobId,
   });
@@ -202,7 +204,7 @@ async function handleScatter(
  */
 async function handleGather(
   client: MockArkeClient,
-  then: { gather: string; route?: Array<{ where: import('../types').WhereCondition; target: string }> },
+  then: { gather: EntityRef; route?: RouteRule[] },
   context: InterpretContext
 ): Promise<InterpretResult> {
   // Gather requires batch context
@@ -223,14 +225,14 @@ async function handleGather(
 
     return {
       action: 'gather_trigger',
-      target: then.gather,
+      target: then.gather.pi,
       targetType,
       outputs: context.outputs,
       updatedBatch: slotResult.batch,
       allOutputs: slotResult.allOutputs,
       handoffRecord: {
         type: 'gather',
-        target: then.gather,
+        target: then.gather.pi,
         targetType,
         batchId: context.batch.id,
       },

@@ -1,3 +1,5 @@
+import type { EntityRef } from './refs';
+
 /**
  * RhizaEntity - A workflow entity
  *
@@ -32,8 +34,8 @@ export interface RhizaProperties {
   /** Semantic version */
   version: string;
 
-  /** Entry point - klados ID that starts the workflow */
-  entry: string;
+  /** Entry point - reference to the klados that starts the workflow */
+  entry: EntityRef;
 
   /** Flow definition - what happens after each klados */
   flow: Record<string, FlowStep>;
@@ -58,14 +60,14 @@ export interface FlowStep {
  * ThenSpec - Handoff specification
  *
  * Three core operations: pass, scatter, gather (+ done for terminal)
- * - Target can be klados ID or rhiza ID (discovered at runtime)
+ * - Target is an EntityRef (type hint avoids runtime discovery)
  * - Route conditions can be added to any operation via `route` array
  */
 export type ThenSpec =
   | { done: true }                                    // Terminal - workflow ends
-  | { pass: string; route?: RouteRule[] }            // 1:1 - target ID (klados or rhiza)
-  | { scatter: string; route?: RouteRule[] }         // 1:N fan-out - target ID
-  | { gather: string; route?: RouteRule[] };         // N:1 fan-in - target ID
+  | { pass: EntityRef; route?: RouteRule[] }         // 1:1 - target reference
+  | { scatter: EntityRef; route?: RouteRule[] }      // 1:N fan-out - target reference
+  | { gather: EntityRef; route?: RouteRule[] };      // N:1 fan-in - target reference
 
 /**
  * RouteRule - Conditional routing rule
@@ -77,8 +79,8 @@ export interface RouteRule {
   /** Condition to match (supports AND/OR logic) */
   where: WhereCondition;
 
-  /** Target ID if condition matches (overrides default) */
-  target: string;
+  /** Target reference if condition matches (overrides default) */
+  target: EntityRef;
 }
 
 /**

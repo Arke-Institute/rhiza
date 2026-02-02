@@ -10,6 +10,7 @@
  */
 
 import type { RhizaProperties, FlowStep } from '../../../types';
+import { ref } from '../../../types';
 import type { MockRhiza } from '../mock-client';
 
 // ============================================================================
@@ -17,8 +18,8 @@ import type { MockRhiza } from '../mock-client';
 // ============================================================================
 
 export const linearFlow: Record<string, FlowStep> = {
-  'II01klados_a': { then: { pass: 'II01klados_b' } },
-  'II01klados_b': { then: { pass: 'II01klados_c' } },
+  'II01klados_a': { then: { pass: ref('II01klados_b', { type: 'klados' }) } },
+  'II01klados_b': { then: { pass: ref('II01klados_c', { type: 'klados' }) } },
   'II01klados_c': { then: { done: true } },
 };
 
@@ -26,7 +27,7 @@ export const linearRhizaProperties: RhizaProperties = {
   label: 'Linear Workflow',
   description: 'Simple A → B → C chain for testing basic flow',
   version: '1.0.0',
-  entry: 'II01klados_a',
+  entry: ref('II01klados_a', { type: 'klados' }),
   flow: linearFlow,
   status: 'active',
   created_at: '2025-01-01T00:00:00Z',
@@ -43,8 +44,8 @@ export const linearRhiza: MockRhiza = {
 // ============================================================================
 
 export const scatterGatherFlow: Record<string, FlowStep> = {
-  'II01klados_producer': { then: { scatter: 'II01klados_worker' } },
-  'II01klados_worker': { then: { gather: 'II01klados_aggregator' } },
+  'II01klados_producer': { then: { scatter: ref('II01klados_worker', { type: 'klados' }) } },
+  'II01klados_worker': { then: { gather: ref('II01klados_aggregator', { type: 'klados' }) } },
   'II01klados_aggregator': { then: { done: true } },
 };
 
@@ -52,7 +53,7 @@ export const scatterGatherRhizaProperties: RhizaProperties = {
   label: 'Scatter-Gather Workflow',
   description: 'Fan-out to workers, fan-in to aggregator',
   version: '1.0.0',
-  entry: 'II01klados_producer',
+  entry: ref('II01klados_producer', { type: 'klados' }),
   flow: scatterGatherFlow,
   status: 'active',
   created_at: '2025-01-01T00:00:00Z',
@@ -71,11 +72,11 @@ export const scatterGatherRhiza: MockRhiza = {
 export const conditionalFlow: Record<string, FlowStep> = {
   'II01klados_classifier': {
     then: {
-      pass: 'II01klados_default_handler',
+      pass: ref('II01klados_default_handler', { type: 'klados' }),
       route: [
         {
           where: { property: 'content_type', equals: 'file/pdf' },
-          target: 'II01klados_pdf_handler',
+          target: ref('II01klados_pdf_handler', { type: 'klados' }),
         },
         {
           where: {
@@ -84,7 +85,7 @@ export const conditionalFlow: Record<string, FlowStep> = {
               { property: 'content_type', equals: 'file/png' },
             ],
           },
-          target: 'II01klados_image_handler',
+          target: ref('II01klados_image_handler', { type: 'klados' }),
         },
       ],
     },
@@ -98,7 +99,7 @@ export const conditionalRhizaProperties: RhizaProperties = {
   label: 'Conditional Workflow',
   description: 'Routes to different handlers based on content type',
   version: '1.0.0',
-  entry: 'II01klados_classifier',
+  entry: ref('II01klados_classifier', { type: 'klados' }),
   flow: conditionalFlow,
   status: 'active',
   created_at: '2025-01-01T00:00:00Z',
@@ -117,7 +118,7 @@ export const conditionalRhiza: MockRhiza = {
 export const complexRoutingFlow: Record<string, FlowStep> = {
   'II01klados_classifier': {
     then: {
-      pass: 'II01klados_default_handler',
+      pass: ref('II01klados_default_handler', { type: 'klados' }),
       route: [
         {
           // AND condition: must be File type AND large size
@@ -127,7 +128,7 @@ export const complexRoutingFlow: Record<string, FlowStep> = {
               { property: 'size_category', equals: 'large' },
             ],
           },
-          target: 'II01klados_large_file_handler',
+          target: ref('II01klados_large_file_handler', { type: 'klados' }),
         },
         {
           // OR condition nested in AND
@@ -142,7 +143,7 @@ export const complexRoutingFlow: Record<string, FlowStep> = {
               },
             ],
           },
-          target: 'II01klados_priority_handler',
+          target: ref('II01klados_priority_handler', { type: 'klados' }),
         },
       ],
     },
@@ -156,7 +157,7 @@ export const complexRoutingRhizaProperties: RhizaProperties = {
   label: 'Complex Routing Workflow',
   description: 'Tests nested AND/OR routing conditions',
   version: '1.0.0',
-  entry: 'II01klados_classifier',
+  entry: ref('II01klados_classifier', { type: 'klados' }),
   flow: complexRoutingFlow,
   status: 'active',
 };
@@ -180,7 +181,7 @@ export const invalidRhizaProperties = {
   entryNotInFlow: {
     label: 'Entry Not In Flow',
     version: '1.0.0',
-    entry: 'II01klados_nonexistent',
+    entry: ref('II01klados_nonexistent', { type: 'klados' }),
     flow: {
       'II01klados_a': { then: { done: true } },
     },
@@ -191,9 +192,9 @@ export const invalidRhizaProperties = {
   targetNotInFlow: {
     label: 'Target Not In Flow',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
-      'II01klados_a': { then: { pass: 'II01klados_nonexistent' } },
+      'II01klados_a': { then: { pass: ref('II01klados_nonexistent', { type: 'klados' }) } },
     },
     status: 'active' as const,
   } as RhizaProperties,
@@ -202,11 +203,11 @@ export const invalidRhizaProperties = {
   cycleDetected: {
     label: 'Cycle Detected',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
-      'II01klados_a': { then: { pass: 'II01klados_b' } },
-      'II01klados_b': { then: { pass: 'II01klados_c' } },
-      'II01klados_c': { then: { pass: 'II01klados_a' } }, // Cycle!
+      'II01klados_a': { then: { pass: ref('II01klados_b', { type: 'klados' }) } },
+      'II01klados_b': { then: { pass: ref('II01klados_c', { type: 'klados' }) } },
+      'II01klados_c': { then: { pass: ref('II01klados_a', { type: 'klados' }) } }, // Cycle!
     },
     status: 'active' as const,
   } as RhizaProperties,
@@ -215,10 +216,10 @@ export const invalidRhizaProperties = {
   noTerminal: {
     label: 'No Terminal',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
-      'II01klados_a': { then: { pass: 'II01klados_b' } },
-      'II01klados_b': { then: { pass: 'II01klados_a' } },
+      'II01klados_a': { then: { pass: ref('II01klados_b', { type: 'klados' }) } },
+      'II01klados_b': { then: { pass: ref('II01klados_a', { type: 'klados' }) } },
     },
     status: 'active' as const,
   } as RhizaProperties,
@@ -227,7 +228,7 @@ export const invalidRhizaProperties = {
   unreachableKlados: {
     label: 'Unreachable Klados',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
       'II01klados_a': { then: { done: true } },
       'II01klados_orphan': { then: { done: true } }, // Never reached
@@ -239,7 +240,7 @@ export const invalidRhizaProperties = {
   missingThen: {
     label: 'Missing Then',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
       'II01klados_a': {} as FlowStep, // Missing then
     },
@@ -250,7 +251,7 @@ export const invalidRhizaProperties = {
   invalidHandoff: {
     label: 'Invalid Handoff',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
       'II01klados_a': { then: { invalid: 'something' } as unknown as FlowStep['then'] },
     },
@@ -261,12 +262,12 @@ export const invalidRhizaProperties = {
   routeMissingWhere: {
     label: 'Route Missing Where',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
       'II01klados_a': {
         then: {
-          pass: 'II01klados_b',
-          route: [{ target: 'II01klados_c' }] as unknown as RhizaProperties['flow'][string]['then'] extends { route?: infer R } ? R : never,
+          pass: ref('II01klados_b', { type: 'klados' }),
+          route: [{ target: ref('II01klados_c', { type: 'klados' }) }] as unknown as RhizaProperties['flow'][string]['then'] extends { route?: infer R } ? R : never,
         },
       },
       'II01klados_b': { then: { done: true } },
@@ -279,11 +280,11 @@ export const invalidRhizaProperties = {
   routeMissingTarget: {
     label: 'Route Missing Target',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {
       'II01klados_a': {
         then: {
-          pass: 'II01klados_b',
+          pass: ref('II01klados_b', { type: 'klados' }),
           route: [{ where: { property: 'type', equals: 'test' } }] as unknown as RhizaProperties['flow'][string]['then'] extends { route?: infer R } ? R : never,
         },
       },
@@ -296,7 +297,7 @@ export const invalidRhizaProperties = {
   emptyFlow: {
     label: 'Empty Flow',
     version: '1.0.0',
-    entry: 'II01klados_a',
+    entry: ref('II01klados_a', { type: 'klados' }),
     flow: {},
     status: 'active' as const,
   } as RhizaProperties,

@@ -11,6 +11,7 @@ import { createMockClient } from '../../fixtures/mock-client';
 import { scatterGatherKladoi } from '../../fixtures/kladoi';
 import { scatterGatherFlow } from '../../fixtures/rhizai';
 import type { FlowStep } from '../../../types';
+import { ref } from '../../../types';
 import type { MockArkeClient } from '../../fixtures/mock-client';
 
 describe('Scatter', () => {
@@ -20,22 +21,22 @@ describe('Scatter', () => {
 
       const result = findGatherTarget(flow, 'II01klados_worker');
 
-      expect(result).toBe('II01klados_aggregator');
+      expect(result?.pi).toBe('II01klados_aggregator');
     });
 
     it('returns gather target when step has gather handoff', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { gather: 'custom_aggregator' } },
+        worker: { then: { gather: ref('custom_aggregator') } },
       };
 
       const result = findGatherTarget(flow, 'worker');
 
-      expect(result).toBe('custom_aggregator');
+      expect(result?.pi).toBe('custom_aggregator');
     });
 
     it('returns null when target not in flow', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { gather: 'aggregator' } },
+        worker: { then: { gather: ref('aggregator') } },
       };
 
       const result = findGatherTarget(flow, 'nonexistent');
@@ -55,7 +56,7 @@ describe('Scatter', () => {
 
     it('returns null when target has pass handoff', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { pass: 'next_step' } },
+        worker: { then: { pass: ref('next_step') } },
       };
 
       const result = findGatherTarget(flow, 'worker');
@@ -65,7 +66,7 @@ describe('Scatter', () => {
 
     it('returns null when target has scatter handoff', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { scatter: 'sub_worker' } },
+        worker: { then: { scatter: ref('sub_worker') } },
       };
 
       const result = findGatherTarget(flow, 'worker');

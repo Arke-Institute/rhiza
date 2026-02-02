@@ -8,6 +8,7 @@
  */
 
 import type { KladosEntity, RhizaEntity, RhizaProperties, ThenSpec } from '../types';
+import { isEntityRef } from '../types';
 import type { ValidationError, ValidationWarning } from './validate-klados';
 import type { MockArkeClient } from '../__tests__/fixtures/mock-client';
 
@@ -126,6 +127,7 @@ async function resolveTarget(
 
 /**
  * Extract route targets from a ThenSpec
+ * Returns the pi (ID) strings from EntityRefs
  */
 function extractRouteTargets(then: ThenSpec): string[] {
   if ('done' in then) return [];
@@ -133,13 +135,13 @@ function extractRouteTargets(then: ThenSpec): string[] {
   const targets: string[] = [];
 
   if ('pass' in then && then.route) {
-    targets.push(...then.route.map((r) => r.target));
+    targets.push(...then.route.filter((r) => isEntityRef(r.target)).map((r) => r.target.pi));
   }
   if ('scatter' in then && then.route) {
-    targets.push(...then.route.map((r) => r.target));
+    targets.push(...then.route.filter((r) => isEntityRef(r.target)).map((r) => r.target.pi));
   }
   if ('gather' in then && then.route) {
-    targets.push(...then.route.map((r) => r.target));
+    targets.push(...then.route.filter((r) => isEntityRef(r.target)).map((r) => r.target.pi));
   }
 
   return targets;
@@ -165,6 +167,8 @@ function validateCardinalityRuntime(
   const sourceProduces = sourceKlados.properties.produces;
 
   if ('scatter' in then) {
+    const scatterTargetId = then.scatter.pi;
+
     // Scatter requires produces.cardinality === 'many'
     if (sourceProduces.cardinality !== 'many') {
       errors.push({
@@ -175,11 +179,11 @@ function validateCardinalityRuntime(
     }
 
     // Scatter target must accept 'one' (if it's a klados)
-    const targetKlados = kladoi.get(then.scatter);
+    const targetKlados = kladoi.get(scatterTargetId);
     if (targetKlados && targetKlados.properties.accepts.cardinality !== 'one') {
       errors.push({
         code: 'TARGET_CARDINALITY_MISMATCH',
-        message: `Scatter target '${then.scatter}' accepts 'many', should accept 'one'`,
+        message: `Scatter target '${scatterTargetId}' accepts 'many', should accept 'one'`,
         klados_id: kladosId,
       });
     }
@@ -196,25 +200,29 @@ function validateCardinalityRuntime(
   }
 
   if ('gather' in then) {
+    const gatherTargetId = then.gather.pi;
+
     // Gather target must accept 'many' (if it's a klados)
-    const targetKlados = kladoi.get(then.gather);
+    const targetKlados = kladoi.get(gatherTargetId);
     if (targetKlados && targetKlados.properties.accepts.cardinality !== 'many') {
       errors.push({
         code: 'TARGET_CARDINALITY_MISMATCH',
-        message: `Gather target '${then.gather}' accepts 'one', should accept 'many'`,
+        message: `Gather target '${gatherTargetId}' accepts 'one', should accept 'many'`,
         klados_id: kladosId,
       });
     }
   }
 
   if ('pass' in then) {
-    const targetKlados = kladoi.get(then.pass);
+    const passTargetId = then.pass.pi;
+
+    const targetKlados = kladoi.get(passTargetId);
     if (targetKlados) {
       // Cardinality mismatch warning
       if (sourceProduces.cardinality !== targetKlados.properties.accepts.cardinality) {
         warnings.push({
           code: 'CARDINALITY_MISMATCH',
-          message: `Klados '${kladosId}' produces '${sourceProduces.cardinality}' but '${then.pass}' accepts '${targetKlados.properties.accepts.cardinality}'`,
+          message: `Klados '${kladosId}' produces '${sourceProduces.cardinality}' but '${passTargetId}' accepts '${targetKlados.properties.accepts.cardinality}'`,
           klados_id: kladosId,
         });
       }

@@ -12,6 +12,7 @@ import { createMockClient } from '../../fixtures/mock-client';
 import { allMockKladoi } from '../../fixtures/kladoi';
 import { allMockRhizai, scatterGatherFlow } from '../../fixtures/rhizai';
 import type { ThenSpec } from '../../../types';
+import { ref } from '../../../types';
 import type { MockArkeClient } from '../../fixtures/mock-client';
 
 describe('Handoff Interpretation', () => {
@@ -59,14 +60,14 @@ describe('Handoff Interpretation', () => {
 
   describe('pass handoff', () => {
     it('returns action: pass with target klados', async () => {
-      const then: ThenSpec = { pass: 'II01klados_worker' };
+      const then: ThenSpec = { pass: ref('II01klados_worker', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
         jobId: 'job-1',
         outputs: ['entity-1'],
         flow: {
-          'II01klados_producer': { then: { pass: 'II01klados_worker' } },
+          'II01klados_producer': { then: { pass: ref('II01klados_worker', { type: 'klados' }) } },
           'II01klados_worker': { then: { done: true } },
         },
       };
@@ -79,14 +80,14 @@ describe('Handoff Interpretation', () => {
     });
 
     it('discovers target type as rhiza for sub-workflow', async () => {
-      const then: ThenSpec = { pass: 'II01rhiza_linear' };
+      const then: ThenSpec = { pass: ref('II01rhiza_linear', { type: 'rhiza' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
         jobId: 'job-1',
         outputs: ['entity-1'],
         flow: {
-          'II01klados_producer': { then: { pass: 'II01rhiza_linear' } },
+          'II01klados_producer': { then: { pass: ref('II01rhiza_linear', { type: 'rhiza' }) } },
         },
       };
 
@@ -98,14 +99,14 @@ describe('Handoff Interpretation', () => {
     });
 
     it('includes handoff record for logging', async () => {
-      const then: ThenSpec = { pass: 'II01klados_worker' };
+      const then: ThenSpec = { pass: ref('II01klados_worker', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
         jobId: 'job-1',
         outputs: ['entity-1'],
         flow: {
-          'II01klados_producer': { then: { pass: 'II01klados_worker' } },
+          'II01klados_producer': { then: { pass: ref('II01klados_worker', { type: 'klados' }) } },
           'II01klados_worker': { then: { done: true } },
         },
       };
@@ -119,9 +120,9 @@ describe('Handoff Interpretation', () => {
 
     it('applies route rules to override default target', async () => {
       const then: ThenSpec = {
-        pass: 'II01klados_default_handler',
+        pass: ref('II01klados_default_handler', { type: 'klados' }),
         route: [
-          { where: { property: 'content_type', equals: 'file/pdf' }, target: 'II01klados_pdf_handler' },
+          { where: { property: 'content_type', equals: 'file/pdf' }, target: ref('II01klados_pdf_handler', { type: 'klados' }) },
         ],
       };
       const context: InterpretContext = {
@@ -144,9 +145,9 @@ describe('Handoff Interpretation', () => {
 
     it('falls back to default when no route matches', async () => {
       const then: ThenSpec = {
-        pass: 'II01klados_default_handler',
+        pass: ref('II01klados_default_handler', { type: 'klados' }),
         route: [
-          { where: { property: 'content_type', equals: 'file/pdf' }, target: 'II01klados_pdf_handler' },
+          { where: { property: 'content_type', equals: 'file/pdf' }, target: ref('II01klados_pdf_handler', { type: 'klados' }) },
         ],
       };
       const context: InterpretContext = {
@@ -170,7 +171,7 @@ describe('Handoff Interpretation', () => {
 
   describe('scatter handoff', () => {
     it('returns action: scatter with batch', async () => {
-      const then: ThenSpec = { scatter: 'II01klados_worker' };
+      const then: ThenSpec = { scatter: ref('II01klados_worker', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
@@ -188,7 +189,7 @@ describe('Handoff Interpretation', () => {
     });
 
     it('includes invocations for each output', async () => {
-      const then: ThenSpec = { scatter: 'II01klados_worker' };
+      const then: ThenSpec = { scatter: ref('II01klados_worker', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
@@ -204,7 +205,7 @@ describe('Handoff Interpretation', () => {
     });
 
     it('identifies gather target from flow', async () => {
-      const then: ThenSpec = { scatter: 'II01klados_worker' };
+      const then: ThenSpec = { scatter: ref('II01klados_worker', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
@@ -219,7 +220,7 @@ describe('Handoff Interpretation', () => {
     });
 
     it('handles empty outputs (no scatter needed)', async () => {
-      const then: ThenSpec = { scatter: 'II01klados_worker' };
+      const then: ThenSpec = { scatter: ref('II01klados_worker', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
@@ -238,7 +239,7 @@ describe('Handoff Interpretation', () => {
 
   describe('gather handoff', () => {
     it('returns action: gather_wait when not last slot', async () => {
-      const then: ThenSpec = { gather: 'II01klados_aggregator' };
+      const then: ThenSpec = { gather: ref('II01klados_aggregator', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_worker',
@@ -275,7 +276,7 @@ describe('Handoff Interpretation', () => {
     });
 
     it('returns action: gather_trigger when last slot', async () => {
-      const then: ThenSpec = { gather: 'II01klados_aggregator' };
+      const then: ThenSpec = { gather: ref('II01klados_aggregator', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_worker',
@@ -313,7 +314,7 @@ describe('Handoff Interpretation', () => {
     });
 
     it('includes all outputs when triggering gather', async () => {
-      const then: ThenSpec = { gather: 'II01klados_aggregator' };
+      const then: ThenSpec = { gather: ref('II01klados_aggregator', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_worker',
@@ -351,7 +352,7 @@ describe('Handoff Interpretation', () => {
     });
 
     it('updates batch slot on gather', async () => {
-      const then: ThenSpec = { gather: 'II01klados_aggregator' };
+      const then: ThenSpec = { gather: ref('II01klados_aggregator', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_worker',
@@ -392,14 +393,15 @@ describe('Handoff Interpretation', () => {
 
   describe('error handling', () => {
     it('throws when target not found', async () => {
-      const then: ThenSpec = { pass: 'nonexistent_klados' };
+      // No type hint - forces discovery via API which will fail for nonexistent target
+      const then: ThenSpec = { pass: ref('nonexistent_klados') };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_producer',
         jobId: 'job-1',
         outputs: ['entity-1'],
         flow: {
-          'II01klados_producer': { then: { pass: 'nonexistent_klados' } },
+          'II01klados_producer': { then: { pass: ref('nonexistent_klados') } },
         },
       };
 
@@ -407,7 +409,7 @@ describe('Handoff Interpretation', () => {
     });
 
     it('throws when gather called without batch context', async () => {
-      const then: ThenSpec = { gather: 'II01klados_aggregator' };
+      const then: ThenSpec = { gather: ref('II01klados_aggregator', { type: 'klados' }) };
       const context: InterpretContext = {
         rhizaId: 'II01rhiza_test',
         kladosId: 'II01klados_worker',

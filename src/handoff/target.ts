@@ -5,7 +5,7 @@
  * and discovers target types by fetching from the API.
  */
 
-import type { ThenSpec } from '../types';
+import type { ThenSpec, EntityRef } from '../types';
 import type { MockArkeClient } from '../__tests__/fixtures/mock-client';
 import { matchRoute } from './route';
 
@@ -14,20 +14,20 @@ import { matchRoute } from './route';
  *
  * @param then - The ThenSpec to resolve
  * @param properties - The entity properties to match against route rules
- * @returns The resolved target ID, or null for done
+ * @returns The resolved EntityRef, or null for done
  */
 export function resolveTarget(
   then: ThenSpec,
   properties: Record<string, unknown>
-): string | null {
+): EntityRef | null {
   // Terminal - no target
   if ('done' in then) {
     return null;
   }
 
   // Get the default target and optional route rules
-  let defaultTarget: string;
-  let route: Array<{ where: import('../types').WhereCondition; target: string }> | undefined;
+  let defaultTarget: EntityRef;
+  let route: import('../types').RouteRule[] | undefined;
 
   if ('pass' in then) {
     defaultTarget = then.pass;
@@ -59,19 +59,28 @@ export function resolveTarget(
 }
 
 /**
- * Discover the type of a target by fetching it from the API
+ * Discover the type of a target
  *
- * Tries to fetch as klados first, then as rhiza.
+ * If the EntityRef has a type hint, returns it directly (no API call).
+ * Otherwise, tries to fetch as klados first, then as rhiza.
  *
  * @param client - The Arke client
- * @param targetId - The target ID to discover
+ * @param target - The target EntityRef
  * @returns 'klados' or 'rhiza'
- * @throws Error if target not found
+ * @throws Error if target not found and no type hint
  */
 export async function discoverTargetType(
   client: MockArkeClient,
-  targetId: string
+  target: EntityRef
 ): Promise<'klados' | 'rhiza'> {
+  // Fast path: type hint provided
+  if (target.type === 'klados' || target.type === 'rhiza') {
+    return target.type;
+  }
+
+  // Fallback: discover via API using target.pi
+  const targetId = target.pi;
+
   // Try as klados first
   const kladosResult = await client.api.GET('/kladoi/{id}', {
     params: { path: { id: targetId } },

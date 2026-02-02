@@ -1,3 +1,7 @@
+// Entity reference types
+export type { EntityRef } from './refs';
+export { isEntityRef, ref } from './refs';
+
 // Klados entity types
 export type {
   KladosEntity,

@@ -286,7 +286,7 @@ describe('Klados Fixtures', () => {
 
 describe('Rhiza Fixtures', () => {
   it('linear rhiza has correct entry', () => {
-    expect(linearRhiza.properties.entry).toBe('II01klados_a');
+    expect(linearRhiza.properties.entry.pi).toBe('II01klados_a');
     expect(linearRhiza.properties.flow['II01klados_a']).toBeDefined();
   });
 
@@ -295,11 +295,11 @@ describe('Rhiza Fixtures', () => {
 
     // Producer scatters to worker
     expect(flow['II01klados_producer'].then).toHaveProperty('scatter');
-    expect((flow['II01klados_producer'].then as { scatter: string }).scatter).toBe('II01klados_worker');
+    expect((flow['II01klados_producer'].then as { scatter: { pi: string } }).scatter.pi).toBe('II01klados_worker');
 
     // Worker gathers to aggregator
     expect(flow['II01klados_worker'].then).toHaveProperty('gather');
-    expect((flow['II01klados_worker'].then as { gather: string }).gather).toBe('II01klados_aggregator');
+    expect((flow['II01klados_worker'].then as { gather: { pi: string } }).gather.pi).toBe('II01klados_aggregator');
 
     // Aggregator is terminal
     expect(flow['II01klados_aggregator'].then).toHaveProperty('done');
@@ -307,7 +307,7 @@ describe('Rhiza Fixtures', () => {
 
   it('invalid rhiza properties have expected issues', () => {
     expect(invalidRhizaProperties.missingEntry).not.toHaveProperty('entry');
-    expect(invalidRhizaProperties.entryNotInFlow.entry).toBe('II01klados_nonexistent');
+    expect(invalidRhizaProperties.entryNotInFlow.entry.pi).toBe('II01klados_nonexistent');
     expect(invalidRhizaProperties.emptyFlow.flow).toEqual({});
   });
 });

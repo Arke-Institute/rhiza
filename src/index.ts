@@ -32,6 +32,10 @@ export type {
   WhereOr,
 } from './types/rhiza';
 
+// Entity reference types
+export type { EntityRef } from './types/refs';
+export { isEntityRef, ref } from './types/refs';
+
 // Request types
 export type {
   KladosRequest,
@@ -155,5 +159,67 @@ export {
 // Signature utilities (TODO: implement)
 // export * from './signature';
 
-// Client interface (TODO: implement)
-// export * from './client';
+// ============================================================================
+// Client - API client interface and mock implementation
+// ============================================================================
+
+export type {
+  // Interface and result type
+  RhizaClient,
+  ApiResult,
+
+  // Error types
+  ApiError,
+  ValidationApiError,
+
+  // Entity types
+  RelationshipSpec,
+  CreateEntityParams,
+  UpdateEntityParams,
+  EntityResponse,
+
+  // Klados types
+  CreateKladosParams,
+  UpdateKladosParams,
+  RhizaContext as ClientRhizaContext,
+  InvokeKladosParams,
+
+  // Rhiza types
+  CreateRhizaParams,
+  UpdateRhizaParams,
+  InvokeRhizaParams,
+
+  // Invoke responses
+  GrantInfo,
+  InvokePendingResponse,
+  InvokeStartedResponse,
+  InvokeRejectedResponse,
+  InvokeResponse,
+
+  // Workflow status
+  ProgressCounters as ClientProgressCounters,
+  WorkflowErrorInfo,
+  WorkflowStatusResponse as ClientWorkflowStatusResponse,
+
+  // Resume
+  ResumeParams,
+  ResumedJobInfo,
+  ResumeResponse,
+
+  // Log types
+  LogErrorInfo,
+  CreateLogParams,
+  UpdateLogParams,
+
+  // Batch types
+  CreateBatchParams,
+  UpdateBatchParams,
+
+  // Verification
+  VerifyTokenResponse,
+  VerifySuccessResponse,
+  VerifyFailureResponse,
+  VerifyResponse,
+} from './client';
+
+export { MockRhizaClient, createMockRhizaClient } from './client';

@@ -5,7 +5,7 @@
  * into individual invocations of a worker klados.
  */
 
-import type { FlowStep } from '../types';
+import type { FlowStep, EntityRef } from '../types';
 import type { MockArkeClient } from '../__tests__/fixtures/mock-client';
 
 /**
@@ -84,12 +84,12 @@ export interface CreateScatterParams {
  *
  * @param flow - The rhiza flow definition
  * @param targetKladosId - The scatter target klados ID
- * @returns The gather target ID, or null if not a gather handoff
+ * @returns The gather target EntityRef, or null if not a gather handoff
  */
 export function findGatherTarget(
   flow: Record<string, FlowStep>,
   targetKladosId: string
-): string | null {
+): EntityRef | null {
   const step = flow[targetKladosId];
   if (!step || !step.then) {
     return null;
