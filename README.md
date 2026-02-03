@@ -24,93 +24,54 @@ Rhiza replaces centralized orchestrators with a **cascading handoff pattern** wh
 npm install @arke-institute/rhiza
 ```
 
-## Quick Example
+## Quick Start
 
-### Define a Workflow
+Build a klados worker in ~15 lines with `KladosJob`:
 
 ```typescript
-import type { Rhiza } from '@arke-institute/rhiza';
+import { KladosJob, type KladosRequest } from '@arke-institute/rhiza';
 
-const pdfWorkflow: Rhiza = {
-  id: 'pdf-workflow',
-  name: 'PDF Processing Pipeline',
-  version: '1.0',
-  entry: 'pdf-processor',
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const req = await request.json<KladosRequest>();
 
-  kladoi: {
-    'pdf-processor': {
-      action: 'II01abc...',  // Agent ID
-      accepts: { types: ['file/pdf'], cardinality: 'one' },
-      produces: { types: ['file/jpeg'], cardinality: 'many' },
-      then: { scatter: 'ocr-service' },
-    },
-    'ocr-service': {
-      action: 'II01def...',
-      accepts: { types: ['file/jpeg'], cardinality: 'one' },
-      produces: { types: ['text/ocr'], cardinality: 'one' },
-      then: { gather: 'text-assembler' },
-    },
-    'text-assembler': {
-      action: 'II01ghi...',
-      accepts: { types: ['text/ocr'], cardinality: 'many' },
-      produces: { types: ['file/text'], cardinality: 'one' },
-      then: { done: true },
-    },
-  },
+    const job = KladosJob.accept(req, {
+      agentId: env.AGENT_ID,
+      agentVersion: env.AGENT_VERSION,
+      authToken: env.ARKE_AGENT_KEY,
+    });
+
+    ctx.waitUntil(job.run(async () => {
+      job.log.info('Processing');
+      const target = await job.fetchTarget();
+      const outputs = await processEntity(target, job.client);
+      return outputs;  // Job handles handoff + log finalization
+    }));
+
+    return Response.json(job.acceptResponse);
+  }
 };
 ```
 
-### Validate
+`KladosJob` handles:
+- Client setup with correct auth
+- Initial log entry creation
+- Workflow handoffs (`interpretThen`)
+- Error handling (log + batch slot updates)
+- Log finalization
+
+See the full [Klados Worker Guide](docs/klados-worker-guide.md) for details.
+
+## Validation
 
 ```typescript
-import { validateRhiza } from '@arke-institute/rhiza';
+import { validateRhizaProperties, validateKladosProperties } from '@arke-institute/rhiza';
 
-const result = validateRhiza(pdfWorkflow);
+const result = validateRhizaProperties(rhizaEntity.properties);
 if (!result.valid) {
   console.error('Errors:', result.errors);
+  console.warn('Warnings:', result.warnings);
 }
-```
-
-### Handle Handoffs (in a Klados implementation)
-
-```typescript
-import { interpretThen, writeKladosLog } from '@arke-institute/rhiza';
-
-// After processing...
-const handoffResult = await interpretThen(
-  client,
-  context.rhiza,
-  kladosSpec,
-  outputEntityIds,
-  logEntryId
-);
-
-// Write log with handoff records
-await writeKladosLog({
-  client,
-  jobCollectionId: context.job_collection,
-  entry: {
-    // ... log entry data
-    handoffs: handoffResult.handoffRecord ? [handoffResult.handoffRecord] : undefined,
-  },
-  messages: logger.getMessages(),
-  agentId,
-  agentVersion,
-});
-```
-
-### Resume Failed Workflow
-
-```typescript
-import { resumeWorkflow, getErrorSummary } from '@arke-institute/rhiza';
-
-// Check status
-const summary = await getErrorSummary(client, jobCollectionId);
-console.log(`${summary.retryableErrors} errors can be retried`);
-
-// Resume
-const result = await resumeWorkflow(client, jobCollectionId);
-console.log(`Resumed ${result.resumed} jobs`);
 ```
 
 ## Handoff Types
@@ -125,15 +86,20 @@ console.log(`Resumed ${result.resumed} jobs`);
 
 ## Documentation
 
-See the `plan/` directory for detailed documentation:
+### Guides
+
+- **[Klados Worker Guide](docs/klados-worker-guide.md)** - Building workers with KladosJob
+
+### Design Documents
+
+See the `plan/` directory for detailed design documentation:
 
 - [01-types.md](plan/01-types.md) - Type definitions
 - [02-validation.md](plan/02-validation.md) - Validation rules
 - [03-handoff.md](plan/03-handoff.md) - Handoff logic
 - [04-logging.md](plan/04-logging.md) - Logging and chain
 - [05-resume.md](plan/05-resume.md) - Resumability
-- [06-api-changes.md](plan/06-api-changes.md) - API integration
-- [07-implementation.md](plan/07-implementation.md) - Implementation phases
+- [14-simplification.md](plan/14-simplification.md) - KladosJob design
 
 ## License
 
