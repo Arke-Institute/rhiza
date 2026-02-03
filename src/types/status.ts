@@ -88,8 +88,12 @@ export interface ResumedJob {
   new_job_id: string;
   /** Klados that is being retried */
   klados_id: string;
-  /** Target entity/entities being processed */
-  target: string | string[];
+  /** Single entity being processed (when cardinality = 'one') */
+  target_entity?: string;
+  /** Multiple entities being processed (when cardinality = 'many') */
+  target_entities?: string[];
+  /** Collection for permission scope */
+  target_collection: string;
   /** Original error message */
   error: string;
 }

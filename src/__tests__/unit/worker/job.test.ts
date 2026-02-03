@@ -12,9 +12,10 @@ const testConfig: KladosJobConfig = {
 // Helper to create a minimal valid request
 function createTestRequest(overrides: Partial<KladosRequest> = {}): KladosRequest {
   return {
-    target: 'entity_12345',
+    target_entity: 'entity_12345',
+    target_collection: 'collection_test',
     job_id: 'job_test_001',
-    job_collection: 'collection_test',
+    job_collection: 'job_collection_test',
     api_base: 'https://api.test.arke.institute',
     expires_at: '2099-12-31T23:59:59Z',
     network: 'test',

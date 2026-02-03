@@ -5,10 +5,16 @@ export interface KladosRequest {
   /** Unique job identifier */
   job_id: string;
 
-  /** Target entity/collection to process */
-  target: string;
+  /** Single entity to process (required when klados.accepts.cardinality = 'one') */
+  target_entity?: string;
 
-  /** Job collection for logs */
+  /** Multiple entities to process (required when klados.accepts.cardinality = 'many') */
+  target_entities?: string[];
+
+  /** Collection for permission grant (required) */
+  target_collection: string;
+
+  /** Job collection for logs/outputs */
   job_collection: string;
 
   /** Optional input data */

@@ -17,7 +17,10 @@ import { generateId } from '../utils';
  * Options for invoking a target
  */
 export interface InvokeOptions {
-  /** Job collection ID */
+  /** Collection for permission grant */
+  targetCollection: string;
+
+  /** Job collection ID for logs/outputs */
   jobCollectionId: string;
 
   /** API base URL */
@@ -129,13 +132,15 @@ export async function invokeKlados(
   options: InvokeOptions
 ): Promise<InvokeResult> {
   const jobId = `job_${generateId()}`;
-  const target = Array.isArray(entityTarget) ? entityTarget[0] : entityTarget;
+  const isMany = Array.isArray(entityTarget);
   const expiresIn = options.expiresIn ?? 3600;
 
   // Build the klados request (for logging/replay)
   const request: KladosRequest = {
     job_id: jobId,
-    target,
+    target_entity: isMany ? undefined : entityTarget,
+    target_entities: isMany ? entityTarget : undefined,
+    target_collection: options.targetCollection,
     job_collection: options.jobCollectionId,
     api_base: options.apiBase,
     expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
@@ -160,11 +165,17 @@ export async function invokeKlados(
   };
 
   try {
+    // Map to API format (will be updated when API supports new format)
+    // For now, API expects: target, target_collection, job_collection
+    const apiTarget = request.target_entity ?? request.target_entities?.[0] ?? '';
+
     // Invoke via POST /kladoi/:id/invoke
+    // TODO: Update body schema when API supports new target fields
     const { data, error } = await client.api.POST('/kladoi/{id}/invoke', {
       params: { path: { id: kladosId } },
       body: {
-        target: request.target,
+        target: apiTarget,
+        target_collection: request.target_collection,
         job_collection: request.job_collection,
         input: request.input,
         expires_in: expiresIn,
@@ -224,13 +235,15 @@ export async function invokeRhiza(
   options: InvokeOptions
 ): Promise<InvokeResult> {
   const jobId = `job_${generateId()}`;
-  const target = Array.isArray(entityTarget) ? entityTarget[0] : entityTarget;
+  const isMany = Array.isArray(entityTarget);
   const expiresIn = options.expiresIn ?? 3600;
 
   // Build a minimal request for logging
   const request: KladosRequest = {
     job_id: jobId,
-    target,
+    target_entity: isMany ? undefined : entityTarget,
+    target_entities: isMany ? entityTarget : undefined,
+    target_collection: options.targetCollection,
     job_collection: options.jobCollectionId,
     api_base: options.apiBase,
     expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
@@ -243,11 +256,16 @@ export async function invokeRhiza(
   };
 
   try {
+    // Map to API format (will be updated when API supports new format)
+    const apiTarget = request.target_entity ?? request.target_entities?.[0] ?? '';
+
     // Invoke via POST /rhizai/:id/invoke
+    // TODO: Update body schema when API supports new target fields
     const { data, error } = await client.api.POST('/rhizai/{id}/invoke', {
       params: { path: { id: rhizaId } },
       body: {
-        target,
+        target: apiTarget,
+        target_collection: request.target_collection,
         input: options.input,
         expires_in: expiresIn,
         confirm: true,

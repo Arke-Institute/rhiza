@@ -63,17 +63,74 @@ job.log.error('Error message');
 job.log.success('Success message');
 
 // Original request
-job.request.target;        // Entity ID to process
-job.request.job_id;        // Job identifier
-job.request.job_collection; // Collection for logs
+job.request.target_entity;    // Single entity ID (cardinality: 'one')
+job.request.target_entities;  // Multiple entity IDs (cardinality: 'many')
+job.request.target_collection; // Permission-scoped collection
+job.request.job_collection;   // Collection for logs/outputs
+job.request.job_id;           // Job identifier
+
+// Helper accessors
+job.targetCollection;         // Quick access to permission-scoped collection
 
 // Workflow context
-job.isWorkflow;            // true if part of a rhiza workflow
-job.batchContext;          // { id, index, total } if in scatter/gather
+job.isWorkflow;               // true if part of a rhiza workflow
+job.batchContext;             // { id, index, total } if in scatter/gather
 
 // Response to return
-job.acceptResponse;        // { accepted: true, job_id: '...' }
+job.acceptResponse;           // { accepted: true, job_id: '...' }
 ```
+
+## Target Handling
+
+Klados workers receive targets based on their declared cardinality:
+
+### Cardinality: 'one' (Single Entity)
+
+Use `fetchTarget()` when your klados accepts a single entity:
+
+```typescript
+const job = KladosJob.accept(req, config);
+
+ctx.waitUntil(job.run(async () => {
+  // Fetch the single target entity
+  const target = await job.fetchTarget<{ url: string }>();
+
+  // Process it
+  const result = await processEntity(target);
+  return [result.id];
+}));
+```
+
+### Cardinality: 'many' (Multiple Entities)
+
+Use `fetchTargets()` when your klados accepts multiple entities:
+
+```typescript
+const job = KladosJob.accept(req, config);
+
+ctx.waitUntil(job.run(async () => {
+  // Fetch all target entities
+  const targets = await job.fetchTargets<{ content: string }>();
+
+  // Process them
+  const results = await Promise.all(
+    targets.map(t => processEntity(t))
+  );
+  return results.map(r => r.id);
+}));
+```
+
+### Permission-Scoped Collection
+
+Operations on entities are scoped to `target_collection`. Access it via:
+
+```typescript
+const collectionId = job.targetCollection;
+// or
+const collectionId = job.request.target_collection;
+```
+
+This is different from `job_collection` (where logs and outputs are written).
 
 ## Advanced: Manual Lifecycle Control
 

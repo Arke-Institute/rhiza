@@ -47,7 +47,10 @@ export interface InterpretContext {
   /** Job ID */
   jobId: string;
 
-  /** Job collection ID */
+  /** Collection for permission grant */
+  targetCollection: string;
+
+  /** Job collection ID for logs/outputs */
   jobCollectionId: string;
 
   /** The rhiza flow definition */
@@ -239,6 +242,7 @@ async function handleScatter(
     client,
     rhizaId,
     jobId,
+    targetCollection: context.targetCollection,
     jobCollectionId,
     sourceKladosId: kladosId,
     targetId: targetRef.pi,
@@ -347,6 +351,7 @@ async function handleGather(
  */
 function buildInvokeOptions(context: InterpretContext): InvokeOptions {
   return {
+    targetCollection: context.targetCollection,
     jobCollectionId: context.jobCollectionId,
     apiBase: context.apiBase,
     expiresIn: context.expiresIn,

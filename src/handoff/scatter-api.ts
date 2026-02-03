@@ -25,7 +25,10 @@ export interface CreateScatterOptions {
   /** Job ID */
   jobId: string;
 
-  /** Job collection ID */
+  /** Collection for permission grant */
+  targetCollection: string;
+
+  /** Job collection ID for logs/outputs */
   jobCollectionId: string;
 
   /** Klados ID that created this batch */
@@ -90,6 +93,7 @@ export async function createScatterBatch(
     client,
     rhizaId,
     jobId,
+    targetCollection,
     jobCollectionId,
     sourceKladosId,
     targetId,
@@ -148,6 +152,7 @@ export async function createScatterBatch(
       const globalIndex = i + chunkIndex;
 
       const invokeOptions: InvokeOptions = {
+        targetCollection,
         jobCollectionId,
         apiBase,
         expiresIn,

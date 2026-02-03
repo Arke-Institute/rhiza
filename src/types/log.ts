@@ -32,8 +32,14 @@ export interface KladosLogEntry {
 
   /** Input (what we received) */
   received: {
-    /** Entity ID(s) we processed */
-    target: string | string[];
+    /** Single entity ID we processed (when cardinality = 'one') */
+    target_entity?: string;
+
+    /** Multiple entity IDs we processed (when cardinality = 'many') */
+    target_entities?: string[];
+
+    /** Collection for permission scope */
+    target_collection: string;
 
     /**
      * Previous log entry ID(s) for chain traversal

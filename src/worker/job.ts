@@ -206,7 +206,9 @@ export class KladosJob {
       started_at: new Date().toISOString(),
       status: 'running',
       received: {
-        target: this.request.target,
+        target_entity: this.request.target_entity,
+        target_entities: this.request.target_entities,
+        target_collection: this.request.target_collection,
         from_logs: this.request.rhiza?.parent_logs,
         batch: this.request.rhiza?.batch,
       },
@@ -264,6 +266,7 @@ export class KladosJob {
           rhizaId: this.request.rhiza.id,
           kladosId: this.config.agentId,
           jobId: this.request.job_id,
+          targetCollection: this.request.target_collection,
           jobCollectionId: this.request.job_collection,
           flow: this.flow,
           outputs,
@@ -335,21 +338,33 @@ export class KladosJob {
   }
 
   /**
-   * Fetch the target entity
+   * Get the permission-scoped collection
+   */
+  get targetCollection(): string {
+    return this.request.target_collection;
+  }
+
+  /**
+   * Fetch the target entity (for cardinality: 'one')
    *
-   * Convenience method to fetch the entity being processed.
+   * Convenience method to fetch the single entity being processed.
+   * Throws if target_entity is not set in the request.
    */
   async fetchTarget<T extends Record<string, unknown> = Record<string, unknown>>(): Promise<{
     id: string;
     type: string;
     properties: T;
   }> {
+    if (!this.request.target_entity) {
+      throw new Error('No target_entity in request');
+    }
+
     const { data, error } = await this.client.api.GET('/entities/{id}', {
-      params: { path: { id: this.request.target } },
+      params: { path: { id: this.request.target_entity } },
     });
 
     if (error || !data) {
-      throw new Error(`Failed to fetch target entity: ${this.request.target}`);
+      throw new Error(`Failed to fetch target entity: ${this.request.target_entity}`);
     }
 
     return {
@@ -357,6 +372,42 @@ export class KladosJob {
       type: data.type,
       properties: data.properties as T,
     };
+  }
+
+  /**
+   * Fetch the target entities (for cardinality: 'many')
+   *
+   * Convenience method to fetch all entities being processed.
+   * Throws if target_entities is not set or empty in the request.
+   */
+  async fetchTargets<T extends Record<string, unknown> = Record<string, unknown>>(): Promise<
+    Array<{
+      id: string;
+      type: string;
+      properties: T;
+    }>
+  > {
+    if (!this.request.target_entities?.length) {
+      throw new Error('No target_entities in request');
+    }
+
+    return Promise.all(
+      this.request.target_entities.map(async (id) => {
+        const { data, error } = await this.client.api.GET('/entities/{id}', {
+          params: { path: { id } },
+        });
+
+        if (error || !data) {
+          throw new Error(`Failed to fetch target entity: ${id}`);
+        }
+
+        return {
+          id: data.id,
+          type: data.type,
+          properties: data.properties as T,
+        };
+      })
+    );
   }
 
   /**

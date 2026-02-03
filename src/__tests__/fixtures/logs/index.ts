@@ -17,7 +17,8 @@ import type { KladosLogEntry, KladosRequest } from '../../../types';
 function createRequest(overrides: Partial<KladosRequest> = {}): KladosRequest {
   return {
     job_id: `job_${Date.now()}`,
-    target: 'entity_target',
+    target_entity: 'entity_target',
+    target_collection: 'collection_1',
     job_collection: 'job_collection_1',
     api_base: 'https://api.arke.test',
     expires_at: '2025-12-31T23:59:59Z',
@@ -40,14 +41,14 @@ export const successfulLinearLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:01:00Z',
-    received: { target: 'input_entity' },
+    received: { target_entity: 'input_entity', target_collection: 'collection_1' },
     produced: { entity_ids: ['output_a'] },
     handoffs: [{
       type: 'pass',
       target: 'II01klados_b',
       target_type: 'klados',
       invocations: [{
-        request: createRequest({ job_id: 'job_linear_2', target: 'output_a' }),
+        request: createRequest({ job_id: 'job_linear_2', target_entity: 'output_a' }),
       }],
     }],
   },
@@ -61,9 +62,10 @@ export const successfulLinearLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:02:00Z',
     received: {
-      target: 'output_a',
+      target_entity: 'output_a',
+      target_collection: 'collection_1',
       from_logs: ['log_linear_1'],
-      invocation: { request: createRequest({ job_id: 'job_linear_2', target: 'output_a' }) },
+      invocation: { request: createRequest({ job_id: 'job_linear_2', target_entity: 'output_a' }) },
     },
     produced: { entity_ids: ['output_b'] },
     handoffs: [{
@@ -71,7 +73,7 @@ export const successfulLinearLogs: KladosLogEntry[] = [
       target: 'II01klados_c',
       target_type: 'klados',
       invocations: [{
-        request: createRequest({ job_id: 'job_linear_3', target: 'output_b' }),
+        request: createRequest({ job_id: 'job_linear_3', target_entity: 'output_b' }),
       }],
     }],
   },
@@ -85,9 +87,10 @@ export const successfulLinearLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:02:00Z',
     completed_at: '2025-01-01T00:03:00Z',
     received: {
-      target: 'output_b',
+      target_entity: 'output_b',
+      target_collection: 'collection_1',
       from_logs: ['log_linear_2'],
-      invocation: { request: createRequest({ job_id: 'job_linear_3', target: 'output_b' }) },
+      invocation: { request: createRequest({ job_id: 'job_linear_3', target_entity: 'output_b' }) },
     },
     produced: { entity_ids: ['final_output'] },
     // No handoffs - terminal (done: true)
@@ -109,7 +112,7 @@ export const successfulScatterGatherLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:01:00Z',
-    received: { target: 'input_doc' },
+    received: { target_entity: 'input_doc', target_collection: 'collection_1' },
     produced: { entity_ids: ['page_1', 'page_2', 'page_3'] },
     handoffs: [{
       type: 'scatter',
@@ -117,9 +120,9 @@ export const successfulScatterGatherLogs: KladosLogEntry[] = [
       target_type: 'klados',
       batch_id: 'batch_sg_1',
       invocations: [
-        { request: createRequest({ job_id: 'job_sg_w1', target: 'page_1' }), batch_index: 0 },
-        { request: createRequest({ job_id: 'job_sg_w2', target: 'page_2' }), batch_index: 1 },
-        { request: createRequest({ job_id: 'job_sg_w3', target: 'page_3' }), batch_index: 2 },
+        { request: createRequest({ job_id: 'job_sg_w1', target_entity: 'page_1' }), batch_index: 0 },
+        { request: createRequest({ job_id: 'job_sg_w2', target_entity: 'page_2' }), batch_index: 1 },
+        { request: createRequest({ job_id: 'job_sg_w3', target_entity: 'page_3' }), batch_index: 2 },
       ],
     }],
   },
@@ -134,10 +137,11 @@ export const successfulScatterGatherLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:02:00Z',
     received: {
-      target: 'page_1',
+      target_entity: 'page_1',
+      target_collection: 'collection_1',
       from_logs: ['log_sg_producer'],
       batch: { id: 'batch_sg_1', index: 0, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_sg_w1', target: 'page_1' }), batch_index: 0 },
+      invocation: { request: createRequest({ job_id: 'job_sg_w1', target_entity: 'page_1' }), batch_index: 0 },
     },
     produced: { entity_ids: ['result_1'] },
     // Gather handoff (not last)
@@ -159,10 +163,11 @@ export const successfulScatterGatherLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:02:30Z',
     received: {
-      target: 'page_2',
+      target_entity: 'page_2',
+      target_collection: 'collection_1',
       from_logs: ['log_sg_producer'],
       batch: { id: 'batch_sg_1', index: 1, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_sg_w2', target: 'page_2' }), batch_index: 1 },
+      invocation: { request: createRequest({ job_id: 'job_sg_w2', target_entity: 'page_2' }), batch_index: 1 },
     },
     produced: { entity_ids: ['result_2'] },
     handoffs: [{
@@ -183,10 +188,11 @@ export const successfulScatterGatherLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:03:00Z',
     received: {
-      target: 'page_3',
+      target_entity: 'page_3',
+      target_collection: 'collection_1',
       from_logs: ['log_sg_producer'],
       batch: { id: 'batch_sg_1', index: 2, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_sg_w3', target: 'page_3' }), batch_index: 2 },
+      invocation: { request: createRequest({ job_id: 'job_sg_w3', target_entity: 'page_3' }), batch_index: 2 },
     },
     produced: { entity_ids: ['result_3'] },
     handoffs: [{
@@ -195,7 +201,7 @@ export const successfulScatterGatherLogs: KladosLogEntry[] = [
       target_type: 'klados',
       invocations: [{
         // Last worker triggers the gather
-        request: createRequest({ job_id: 'job_sg_agg', target: 'result_1,result_2,result_3' }),
+        request: createRequest({ job_id: 'job_sg_agg', target_entities: ['result_1', 'result_2', 'result_3'] }),
       }],
     }],
   },
@@ -210,9 +216,10 @@ export const successfulScatterGatherLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:03:00Z',
     completed_at: '2025-01-01T00:04:00Z',
     received: {
-      target: ['result_1', 'result_2', 'result_3'],
+      target_entities: ['result_1', 'result_2', 'result_3'],
+      target_collection: 'collection_1',
       from_logs: ['log_sg_worker_0', 'log_sg_worker_1', 'log_sg_worker_2'],
-      invocation: { request: createRequest({ job_id: 'job_sg_agg', target: 'result_1,result_2,result_3' }) },
+      invocation: { request: createRequest({ job_id: 'job_sg_agg', target_entities: ['result_1', 'result_2', 'result_3'] }) },
     },
     produced: { entity_ids: ['final_document'] },
     // No handoffs - terminal
@@ -234,7 +241,7 @@ export const partialErrorLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:01:00Z',
-    received: { target: 'input_doc' },
+    received: { target_entity: 'input_doc', target_collection: 'collection_1' },
     produced: { entity_ids: ['item_1', 'item_2', 'item_3'] },
     handoffs: [{
       type: 'scatter',
@@ -242,9 +249,9 @@ export const partialErrorLogs: KladosLogEntry[] = [
       target_type: 'klados',
       batch_id: 'batch_err_1',
       invocations: [
-        { request: createRequest({ job_id: 'job_err_w1', target: 'item_1' }), batch_index: 0 },
-        { request: createRequest({ job_id: 'job_err_w2', target: 'item_2' }), batch_index: 1 },
-        { request: createRequest({ job_id: 'job_err_w3', target: 'item_3' }), batch_index: 2 },
+        { request: createRequest({ job_id: 'job_err_w1', target_entity: 'item_1' }), batch_index: 0 },
+        { request: createRequest({ job_id: 'job_err_w2', target_entity: 'item_2' }), batch_index: 1 },
+        { request: createRequest({ job_id: 'job_err_w3', target_entity: 'item_3' }), batch_index: 2 },
       ],
     }],
   },
@@ -259,10 +266,11 @@ export const partialErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:02:00Z',
     received: {
-      target: 'item_1',
+      target_entity: 'item_1',
+      target_collection: 'collection_1',
       from_logs: ['log_err_producer'],
       batch: { id: 'batch_err_1', index: 0, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_err_w1', target: 'item_1' }), batch_index: 0 },
+      invocation: { request: createRequest({ job_id: 'job_err_w1', target_entity: 'item_1' }), batch_index: 0 },
     },
     produced: { entity_ids: ['result_1'] },
   },
@@ -277,10 +285,11 @@ export const partialErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:01:30Z',
     received: {
-      target: 'item_2',
+      target_entity: 'item_2',
+      target_collection: 'collection_1',
       from_logs: ['log_err_producer'],
       batch: { id: 'batch_err_1', index: 1, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_err_w2', target: 'item_2' }), batch_index: 1 },
+      invocation: { request: createRequest({ job_id: 'job_err_w2', target_entity: 'item_2' }), batch_index: 1 },
     },
     error: {
       code: 'TIMEOUT',
@@ -299,10 +308,11 @@ export const partialErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:02:00Z',
     received: {
-      target: 'item_3',
+      target_entity: 'item_3',
+      target_collection: 'collection_1',
       from_logs: ['log_err_producer'],
       batch: { id: 'batch_err_1', index: 2, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_err_w3', target: 'item_3' }), batch_index: 2 },
+      invocation: { request: createRequest({ job_id: 'job_err_w3', target_entity: 'item_3' }), batch_index: 2 },
     },
     produced: { entity_ids: ['result_3'] },
   },
@@ -322,7 +332,7 @@ export const allErrorsLogs: KladosLogEntry[] = [
     status: 'error',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:00:30Z',
-    received: { target: 'input_entity' },
+    received: { target_entity: 'input_entity', target_collection: 'collection_1' },
     error: {
       code: 'VALIDATION_FAILED',
       message: 'Input entity is missing required properties',
@@ -343,7 +353,7 @@ export const allErrorLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:01:00Z',
-    received: { target: 'input_doc' },
+    received: { target_entity: 'input_doc', target_collection: 'collection_1' },
     produced: { entity_ids: ['item_1', 'item_2', 'item_3'] },
     handoffs: [{
       type: 'scatter',
@@ -351,9 +361,9 @@ export const allErrorLogs: KladosLogEntry[] = [
       target_type: 'klados',
       batch_id: 'batch_allerr_1',
       invocations: [
-        { request: createRequest({ job_id: 'job_allerr_w1', target: 'item_1' }), batch_index: 0 },
-        { request: createRequest({ job_id: 'job_allerr_w2', target: 'item_2' }), batch_index: 1 },
-        { request: createRequest({ job_id: 'job_allerr_w3', target: 'item_3' }), batch_index: 2 },
+        { request: createRequest({ job_id: 'job_allerr_w1', target_entity: 'item_1' }), batch_index: 0 },
+        { request: createRequest({ job_id: 'job_allerr_w2', target_entity: 'item_2' }), batch_index: 1 },
+        { request: createRequest({ job_id: 'job_allerr_w3', target_entity: 'item_3' }), batch_index: 2 },
       ],
     }],
   },
@@ -368,10 +378,11 @@ export const allErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:01:30Z',
     received: {
-      target: 'item_1',
+      target_entity: 'item_1',
+      target_collection: 'collection_1',
       from_logs: ['log_allerr_root'],
       batch: { id: 'batch_allerr_1', index: 0, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_allerr_w1', target: 'item_1' }), batch_index: 0 },
+      invocation: { request: createRequest({ job_id: 'job_allerr_w1', target_entity: 'item_1' }), batch_index: 0 },
     },
     error: {
       code: 'TIMEOUT',
@@ -390,10 +401,11 @@ export const allErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:01:30Z',
     received: {
-      target: 'item_2',
+      target_entity: 'item_2',
+      target_collection: 'collection_1',
       from_logs: ['log_allerr_root'],
       batch: { id: 'batch_allerr_1', index: 1, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_allerr_w2', target: 'item_2' }), batch_index: 1 },
+      invocation: { request: createRequest({ job_id: 'job_allerr_w2', target_entity: 'item_2' }), batch_index: 1 },
     },
     error: {
       code: 'INVALID_INPUT',
@@ -412,10 +424,11 @@ export const allErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:01:30Z',
     received: {
-      target: 'item_3',
+      target_entity: 'item_3',
+      target_collection: 'collection_1',
       from_logs: ['log_allerr_root'],
       batch: { id: 'batch_allerr_1', index: 2, total: 3 },
-      invocation: { request: createRequest({ job_id: 'job_allerr_w3', target: 'item_3' }), batch_index: 2 },
+      invocation: { request: createRequest({ job_id: 'job_allerr_w3', target_entity: 'item_3' }), batch_index: 2 },
     },
     error: {
       code: 'NETWORK_ERROR',
@@ -440,7 +453,7 @@ export const mixedErrorLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:01:00Z',
-    received: { target: 'input_doc' },
+    received: { target_entity: 'input_doc', target_collection: 'collection_1' },
     produced: { entity_ids: ['item_1', 'item_2'] },
     handoffs: [{
       type: 'scatter',
@@ -448,8 +461,8 @@ export const mixedErrorLogs: KladosLogEntry[] = [
       target_type: 'klados',
       batch_id: 'batch_mix_1',
       invocations: [
-        { request: createRequest({ job_id: 'job_mix_w1', target: 'item_1' }), batch_index: 0 },
-        { request: createRequest({ job_id: 'job_mix_w2', target: 'item_2' }), batch_index: 1 },
+        { request: createRequest({ job_id: 'job_mix_w1', target_entity: 'item_1' }), batch_index: 0 },
+        { request: createRequest({ job_id: 'job_mix_w2', target_entity: 'item_2' }), batch_index: 1 },
       ],
     }],
   },
@@ -464,10 +477,11 @@ export const mixedErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:01:30Z',
     received: {
-      target: 'item_1',
+      target_entity: 'item_1',
+      target_collection: 'collection_1',
       from_logs: ['log_mix_root'],
       batch: { id: 'batch_mix_1', index: 0, total: 2 },
-      invocation: { request: createRequest({ job_id: 'job_mix_w1', target: 'item_1' }), batch_index: 0 },
+      invocation: { request: createRequest({ job_id: 'job_mix_w1', target_entity: 'item_1' }), batch_index: 0 },
     },
     error: {
       code: 'TIMEOUT',
@@ -486,10 +500,11 @@ export const mixedErrorLogs: KladosLogEntry[] = [
     started_at: '2025-01-01T00:01:00Z',
     completed_at: '2025-01-01T00:01:30Z',
     received: {
-      target: 'item_2',
+      target_entity: 'item_2',
+      target_collection: 'collection_1',
       from_logs: ['log_mix_root'],
       batch: { id: 'batch_mix_1', index: 1, total: 2 },
-      invocation: { request: createRequest({ job_id: 'job_mix_w2', target: 'item_2' }), batch_index: 1 },
+      invocation: { request: createRequest({ job_id: 'job_mix_w2', target_entity: 'item_2' }), batch_index: 1 },
     },
     error: {
       code: 'INVALID_INPUT',
@@ -514,14 +529,14 @@ export const runningWorkflowLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:01:00Z',
-    received: { target: 'input_entity' },
+    received: { target_entity: 'input_entity', target_collection: 'collection_1' },
     produced: { entity_ids: ['output_a'] },
     handoffs: [{
       type: 'pass',
       target: 'II01klados_b',
       target_type: 'klados',
       invocations: [{
-        request: createRequest({ job_id: 'job_run_2', target: 'output_a' }),
+        request: createRequest({ job_id: 'job_run_2', target_entity: 'output_a' }),
       }],
     }],
   },
@@ -535,9 +550,10 @@ export const runningWorkflowLogs: KladosLogEntry[] = [
     status: 'running',
     started_at: '2025-01-01T00:01:00Z',
     received: {
-      target: 'output_a',
+      target_entity: 'output_a',
+      target_collection: 'collection_1',
       from_logs: ['log_run_root'],
-      invocation: { request: createRequest({ job_id: 'job_run_2', target: 'output_a' }) },
+      invocation: { request: createRequest({ job_id: 'job_run_2', target_entity: 'output_a' }) },
     },
   },
 ];
@@ -556,7 +572,7 @@ export const singleNodeLogs: KladosLogEntry[] = [
     status: 'done',
     started_at: '2025-01-01T00:00:00Z',
     completed_at: '2025-01-01T00:01:00Z',
-    received: { target: 'input_entity' },
+    received: { target_entity: 'input_entity', target_collection: 'collection_1' },
     produced: { entity_ids: ['output_entity'] },
     // No handoffs - single klados workflow with done: true
   },
