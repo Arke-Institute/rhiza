@@ -160,6 +160,24 @@ export {
 } from './logging/writer';
 
 // ============================================================================
+// Worker Utilities - High-level abstractions for klados workers
+// ============================================================================
+
+export {
+  KladosJob,
+  type KladosJobConfig,
+  type KladosJobResult,
+  KladosErrorCode,
+  type KladosErrorCodeType,
+  type KladosError,
+  createKladosError,
+  toKladosError,
+  isKladosError,
+  failKlados,
+  type FailKladosOptions,
+} from './worker';
+
+// ============================================================================
 // Utilities
 // ============================================================================
 

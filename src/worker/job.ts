@@ -1,0 +1,380 @@
+/**
+ * KladosJob - High-level klados job management
+ *
+ * Manages the full lifecycle of a klados job:
+ * - Logging (create, update, finalize)
+ * - Error handling (log + batch slot)
+ * - Workflow handoff (via interpretThen)
+ *
+ * Reduces ~80 lines of boilerplate to ~15 lines.
+ */
+
+import { ArkeClient } from '@arke-institute/sdk';
+import type {
+  KladosRequest,
+  KladosResponse,
+  KladosLogEntry,
+  FlowStep,
+  HandoffRecord,
+  BatchContext,
+} from '../types';
+import { KladosLogger } from '../logging/logger';
+import { writeKladosLog, updateLogWithHandoffs, updateLogStatus } from '../logging/writer';
+import { interpretThen, type InterpretResult } from '../handoff/interpret';
+import { generateId } from '../utils';
+import { failKlados, toKladosError } from './errors';
+
+/**
+ * Configuration for creating a KladosJob
+ */
+export interface KladosJobConfig {
+  /** Klados agent ID */
+  agentId: string;
+
+  /** Klados agent version */
+  agentVersion: string;
+
+  /**
+   * Authentication token for Arke client.
+   * Accepts either:
+   * - Agent API key with 'ak_' prefix
+   * - User API key with 'uk_' prefix
+   * - JWT token from Supabase auth
+   */
+  authToken?: string;
+}
+
+/**
+ * Result of completing a job
+ */
+export interface KladosJobResult {
+  /** The handoff result (if in a workflow) */
+  handoff?: InterpretResult;
+
+  /** Output entity IDs */
+  outputs: string[];
+}
+
+/**
+ * State of a KladosJob
+ */
+type JobState = 'accepted' | 'started' | 'completed' | 'failed';
+
+/**
+ * KladosJob - Manages the full lifecycle of a klados job
+ *
+ * Usage:
+ * ```typescript
+ * const job = KladosJob.accept(request, { agentId, agentVersion, authToken });
+ *
+ * ctx.waitUntil(job.run(async () => {
+ *   job.log.info('Processing...');
+ *   const outputs = await doWork();
+ *   return outputs;  // Job handles handoff + finalization
+ * }));
+ *
+ * return Response.json(job.acceptResponse);
+ * ```
+ */
+export class KladosJob {
+  /** The Arke client */
+  readonly client: ArkeClient;
+
+  /** Logger for this job */
+  readonly log: KladosLogger;
+
+  /** The original request */
+  readonly request: KladosRequest;
+
+  /** The acceptance response to return to caller */
+  readonly acceptResponse: KladosResponse;
+
+  /** Job configuration */
+  readonly config: KladosJobConfig;
+
+  /** Generated log ID */
+  readonly logId: string;
+
+  // Internal state
+  private state: JobState = 'accepted';
+  private logFileId: string | null = null;
+  private flow: Record<string, FlowStep> | null = null;
+
+  /**
+   * Create a new KladosJob (private - use static methods)
+   */
+  private constructor(
+    request: KladosRequest,
+    config: KladosJobConfig
+  ) {
+    this.request = request;
+    this.config = config;
+    this.log = new KladosLogger();
+    this.logId = `log_${generateId()}`;
+
+    // Create Arke client
+    this.client = new ArkeClient({
+      baseUrl: request.api_base,
+      authToken: config.authToken,
+    });
+
+    // Build acceptance response
+    this.acceptResponse = {
+      accepted: true,
+      job_id: request.job_id,
+    };
+  }
+
+  /**
+   * Accept a klados request and create a job
+   *
+   * This is the main factory method. Call this immediately when receiving
+   * a request, then process the job asynchronously.
+   *
+   * @param request - The incoming KladosRequest
+   * @param config - Job configuration
+   * @returns A new KladosJob instance
+   */
+  static accept(request: KladosRequest, config: KladosJobConfig): KladosJob {
+    return new KladosJob(request, config);
+  }
+
+  /**
+   * Get the batch context (if in a scatter/gather)
+   */
+  get batchContext(): BatchContext | undefined {
+    return this.request.rhiza?.batch;
+  }
+
+  /**
+   * Check if this job is part of a workflow
+   */
+  get isWorkflow(): boolean {
+    return !!this.request.rhiza;
+  }
+
+  /**
+   * Run the job with automatic lifecycle management
+   *
+   * This is the recommended way to process a klados job. It handles:
+   * - Writing the initial log entry
+   * - Catching and recording errors
+   * - Executing workflow handoffs
+   * - Finalizing the log
+   *
+   * @param fn - The processing function that returns output entity IDs
+   * @returns The job result
+   */
+  async run(
+    fn: () => Promise<string[]>,
+    options?: { outputProperties?: Record<string, unknown> }
+  ): Promise<KladosJobResult> {
+    // Start the job (write initial log)
+    await this.start();
+
+    try {
+      // Execute the processing function
+      const outputs = await fn();
+
+      // Complete the job (handoff + finalize)
+      return await this.complete(outputs, options?.outputProperties);
+    } catch (error) {
+      // Handle failure
+      await this.fail(error);
+      throw error; // Re-throw so caller knows it failed
+    }
+  }
+
+  /**
+   * Start the job (write initial log entry)
+   *
+   * For advanced use cases where you need more control over the lifecycle.
+   * Most users should use `run()` instead.
+   */
+  async start(): Promise<void> {
+    if (this.state !== 'accepted') {
+      throw new Error(`Cannot start job in state: ${this.state}`);
+    }
+
+    // Build log entry
+    const logEntry: KladosLogEntry = {
+      id: this.logId,
+      type: 'klados_log',
+      klados_id: this.config.agentId,
+      rhiza_id: this.request.rhiza?.id,
+      job_id: this.request.job_id,
+      started_at: new Date().toISOString(),
+      status: 'running',
+      received: {
+        target: this.request.target,
+        from_logs: this.request.rhiza?.parent_logs,
+        batch: this.request.rhiza?.batch,
+      },
+    };
+
+    // Write initial log entry
+    const { fileId } = await writeKladosLog({
+      client: this.client,
+      jobCollectionId: this.request.job_collection,
+      entry: logEntry,
+      messages: this.log.getMessages(),
+      agentId: this.config.agentId,
+      agentVersion: this.config.agentVersion,
+    });
+
+    this.logFileId = fileId;
+    this.state = 'started';
+
+    // Fetch rhiza flow if in a workflow
+    if (this.request.rhiza) {
+      await this.fetchFlow();
+    }
+  }
+
+  /**
+   * Complete the job with outputs
+   *
+   * For advanced use cases. Handles workflow handoff and log finalization.
+   *
+   * @param outputs - Output entity IDs produced by this job
+   * @param outputProperties - Properties of the primary output (for routing)
+   */
+  async complete(
+    outputs: string[],
+    outputProperties?: Record<string, unknown>
+  ): Promise<KladosJobResult> {
+    if (this.state !== 'started') {
+      throw new Error(`Cannot complete job in state: ${this.state}`);
+    }
+
+    if (!this.logFileId) {
+      throw new Error('Job not started - logFileId is null');
+    }
+
+    let handoffResult: InterpretResult | undefined;
+    const handoffs: HandoffRecord[] = [];
+
+    // Execute workflow handoff if in a workflow
+    if (this.request.rhiza && this.flow) {
+      const myStep = this.flow[this.config.agentId];
+
+      if (myStep?.then) {
+        handoffResult = await interpretThen(myStep.then, {
+          client: this.client,
+          rhizaId: this.request.rhiza.id,
+          kladosId: this.config.agentId,
+          jobId: this.request.job_id,
+          jobCollectionId: this.request.job_collection,
+          flow: this.flow,
+          outputs,
+          outputProperties,
+          fromLogId: this.logId,
+          path: this.request.rhiza.path,
+          apiBase: this.request.api_base,
+          network: this.request.network,
+          batchContext: this.request.rhiza.batch,
+        });
+
+        if (handoffResult.handoffRecord) {
+          handoffs.push(handoffResult.handoffRecord);
+        }
+
+        this.log.info(`Handoff: ${handoffResult.action}`, {
+          target: handoffResult.target,
+          targetType: handoffResult.targetType,
+        });
+      }
+    }
+
+    // Update log with handoffs
+    if (handoffs.length > 0) {
+      await updateLogWithHandoffs(this.client, this.logFileId, handoffs);
+    }
+
+    // Mark log as done
+    await updateLogStatus(this.client, this.logFileId, 'done');
+
+    this.state = 'completed';
+    this.log.success('Job completed');
+
+    return {
+      handoff: handoffResult,
+      outputs,
+    };
+  }
+
+  /**
+   * Mark the job as failed
+   *
+   * Handles both log status update AND batch slot error (if applicable).
+   *
+   * @param error - The error that caused the failure
+   */
+  async fail(error: unknown): Promise<void> {
+    if (this.state === 'completed' || this.state === 'failed') {
+      return; // Already finalized
+    }
+
+    const kladosError = toKladosError(error);
+    this.log.error('Job failed', { code: kladosError.code, message: kladosError.message });
+
+    // If we haven't started yet, we can't update the log
+    if (!this.logFileId) {
+      this.state = 'failed';
+      return;
+    }
+
+    // Use failKlados to handle both log and batch slot
+    await failKlados(this.client, {
+      logFileId: this.logFileId,
+      batchContext: this.request.rhiza?.batch,
+      error: kladosError,
+    });
+
+    this.state = 'failed';
+  }
+
+  /**
+   * Fetch the target entity
+   *
+   * Convenience method to fetch the entity being processed.
+   */
+  async fetchTarget<T extends Record<string, unknown> = Record<string, unknown>>(): Promise<{
+    id: string;
+    type: string;
+    properties: T;
+  }> {
+    const { data, error } = await this.client.api.GET('/entities/{id}', {
+      params: { path: { id: this.request.target } },
+    });
+
+    if (error || !data) {
+      throw new Error(`Failed to fetch target entity: ${this.request.target}`);
+    }
+
+    return {
+      id: data.id,
+      type: data.type,
+      properties: data.properties as T,
+    };
+  }
+
+  /**
+   * Fetch the rhiza flow definition
+   */
+  private async fetchFlow(): Promise<void> {
+    if (!this.request.rhiza) {
+      return;
+    }
+
+    const { data, error } = await this.client.api.GET('/entities/{id}', {
+      params: { path: { id: this.request.rhiza.id } },
+    });
+
+    if (error || !data) {
+      throw new Error(`Failed to fetch rhiza: ${this.request.rhiza.id}`);
+    }
+
+    this.flow = data.properties.flow as Record<string, FlowStep>;
+  }
+}
