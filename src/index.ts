@@ -1,12 +1,20 @@
 /**
  * @arke-institute/rhiza
  *
- * Types and pure logic library for Arke workflow protocol.
- * Workers use rhiza for types + pure logic, SDK for API calls.
+ * Types, pure logic, and SDK utilities for Arke workflow protocol.
+ * Workers use rhiza for types, validation, and workflow execution.
  *
  * Naming:
  * - Rhiza (ῥίζα) = root, the workflow definition
  * - Klados (κλάδος) = branch, an individual action
+ *
+ * The library provides:
+ * - Types: Entity types, request/response types, log types
+ * - Validation: Pure validation functions for klados/rhiza properties
+ * - Handoff (pure): Route matching, target resolution, gather state transforms
+ * - Handoff (SDK): Invocation, scatter/gather with CAS, orchestration
+ * - Logging: In-memory logger and API writers
+ * - Utilities: ID generation
  */
 
 // ============================================================================
@@ -103,3 +111,56 @@ export {
   type BatchSlotErrorResult,
   type SlotError,
 } from './handoff/gather';
+
+// ============================================================================
+// Handoff - SDK utilities for execution (requires @arke-institute/sdk)
+// ============================================================================
+
+export {
+  discoverTargetType,
+  invokeTarget,
+  invokeKlados,
+  invokeRhiza,
+  type InvokeOptions,
+  type InvokeResult,
+} from './handoff/invoke';
+
+export {
+  createScatterBatch,
+  type CreateScatterOptions,
+  type ScatterResult,
+} from './handoff/scatter-api';
+
+export {
+  completeBatchSlotWithCAS,
+  errorBatchSlotWithCAS,
+  type GatherSlotResult,
+  type GatherSlotErrorResult,
+} from './handoff/gather-api';
+
+export {
+  interpretThen,
+  type HandoffAction,
+  type InterpretContext,
+  type InterpretResult,
+} from './handoff/interpret';
+
+// ============================================================================
+// Logging - In-memory logger and API writers
+// ============================================================================
+
+export { KladosLogger } from './logging/logger';
+export {
+  writeKladosLog,
+  updateLogWithHandoffs,
+  updateLogStatus,
+  type WriteLogOptions,
+  type WriteLogResult,
+  type LogError,
+} from './logging/writer';
+
+// ============================================================================
+// Utilities
+// ============================================================================
+
+export { generateId } from './utils/id';

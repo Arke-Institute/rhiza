@@ -22,10 +22,16 @@
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "@arke-institute/sdk": "^2.6.2"
+  "peerDependencies": {
+    "@arke-institute/sdk": "^2.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@arke-institute/sdk": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@arke-institute/sdk": "^2.9.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.2",
     "vitest": "^2.0.0"
