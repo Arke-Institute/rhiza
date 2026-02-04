@@ -64,6 +64,16 @@ export { getKladosLog, getFirstLogFromCollection, waitForKladosLog, getLogMessag
 // Klados invocation
 export { invokeKlados } from './invoke.js';
 
+// Workflow utilities
+export {
+  invokeRhiza,
+  createRhiza,
+  getWorkflowLogs,
+  waitForWorkflowCompletion,
+  assertWorkflowCompleted,
+  assertWorkflowPath,
+} from './workflows.js';
+
 // Assertions
 export {
   assertLogCompleted,
@@ -88,3 +98,13 @@ export type {
   WaitForLogOptions,
   LogMessageCriteria,
 } from './types.js';
+
+// Workflow types
+export type {
+  InvokeRhizaOptions,
+  InvokeRhizaResult,
+  WorkflowCompletionResult,
+  CreateRhizaOptions,
+  FlowStep,
+  ThenSpec,
+} from './workflows.js';
