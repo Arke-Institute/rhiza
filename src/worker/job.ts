@@ -294,11 +294,14 @@ export class KladosJob {
       await updateLogWithHandoffs(this.client, this.logFileId, handoffs);
     }
 
-    // Mark log as done
-    await updateLogStatus(this.client, this.logFileId, 'done');
-
-    this.state = 'completed';
+    // Add completion message before finalizing
     this.log.success('Job completed');
+    this.state = 'completed';
+
+    // Mark log as done with final messages
+    await updateLogStatus(this.client, this.logFileId, 'done', {
+      messages: this.log.getMessages(),
+    });
 
     return {
       handoff: handoffResult,
@@ -332,6 +335,7 @@ export class KladosJob {
       logFileId: this.logFileId,
       batchContext: this.request.rhiza?.batch,
       error: kladosError,
+      messages: this.log.getMessages(),
     });
 
     this.state = 'failed';

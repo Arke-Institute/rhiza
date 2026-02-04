@@ -200,6 +200,16 @@ export interface LogError {
 }
 
 /**
+ * Options for updating log status
+ */
+export interface UpdateLogStatusOptions {
+  /** Log error details (for error status) */
+  logError?: LogError;
+  /** Messages to append to the log */
+  messages?: LogMessage[];
+}
+
+/**
  * Update log entry status (e.g., to done or error)
  *
  * Uses CAS retry for concurrent safety.
@@ -208,8 +218,10 @@ export async function updateLogStatus(
   client: ArkeClient,
   logFileId: string,
   status: 'running' | 'done' | 'error',
-  logError?: LogError
+  options?: UpdateLogStatusOptions
 ): Promise<void> {
+  const { logError, messages } = options ?? {};
+
   await withCasRetry(
     {
       getTip: async () => {
@@ -234,6 +246,11 @@ export async function updateLogStatus(
 
         if (logError) {
           logData.entry.error = logError;
+        }
+
+        // Update messages if provided
+        if (messages) {
+          logData.messages = messages;
         }
 
         return client.api.PUT('/entities/{id}', {

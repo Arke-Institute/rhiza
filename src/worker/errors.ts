@@ -170,6 +170,9 @@ export interface FailKladosOptions {
 
   /** The error to record */
   error: KladosError | Error | unknown;
+
+  /** Log messages to include */
+  messages?: import('../types').LogMessage[];
 }
 
 /**
@@ -192,8 +195,11 @@ export async function failKlados(
     retryable: kladosError.retryable,
   };
 
-  // Update log status
-  await updateLogStatus(client, options.logFileId, 'error', logError);
+  // Update log status with error and messages
+  await updateLogStatus(client, options.logFileId, 'error', {
+    logError,
+    messages: options.messages,
+  });
 
   // Also update batch slot if applicable
   if (options.batchContext) {
