@@ -112,10 +112,11 @@ export class KladosJob {
     this.log = new KladosLogger();
     this.logId = `log_${generateId()}`;
 
-    // Create Arke client
+    // Create Arke client with correct network
     this.client = new ArkeClient({
       baseUrl: request.api_base,
       authToken: config.authToken,
+      network: request.network,
     });
 
     // Build acceptance response

@@ -89,10 +89,11 @@ export async function writeKladosLog(
   });
 
   if (createError || !logEntity) {
-    throw new Error(`Failed to create log entity: ${createError?.error || 'Unknown error'}`);
+    throw new Error(`Failed to create log entity in ${jobCollectionId}: ${JSON.stringify(createError) || 'Unknown error'}`);
   }
 
   const logEntityId = logEntity.id;
+  const hasParentLogs = entry.received.from_logs && entry.received.from_logs.length > 0;
 
   // 2. Build relationships for received_from chain traversal
   const relationships: Array<{
@@ -103,8 +104,8 @@ export async function writeKladosLog(
 
   // Add received_from relationships for graph traversal
   // These mirror the from_logs array in the entry properties
-  if (entry.received.from_logs && entry.received.from_logs.length > 0) {
-    for (const parentLogId of entry.received.from_logs) {
+  if (hasParentLogs) {
+    for (const parentLogId of entry.received.from_logs!) {
       relationships.push({
         predicate: 'received_from',
         peer: parentLogId,
@@ -135,6 +136,38 @@ export async function writeKladosLog(
         },
       },
       { concurrency: 100 }
+    );
+  }
+
+  // 4. If this is the first log (no parent logs), add a first_log relationship
+  // from the job collection to this log for easy discovery
+  if (!hasParentLogs) {
+    await withCasRetry(
+      {
+        getTip: async () => {
+          const { data, error } = await client.api.GET('/entities/{id}/tip', {
+            params: { path: { id: jobCollectionId } },
+          });
+          if (error || !data) throw new Error('Failed to get job collection tip');
+          return data.cid;
+        },
+        update: async (tip: string) => {
+          return client.api.PUT('/entities/{id}', {
+            params: { path: { id: jobCollectionId } },
+            body: {
+              expect_tip: tip,
+              relationships_add: [
+                {
+                  predicate: 'first_log',
+                  peer: logEntityId,
+                  direction: 'outgoing',
+                },
+              ],
+            },
+          });
+        },
+      },
+      { concurrency: 10 }
     );
   }
 
