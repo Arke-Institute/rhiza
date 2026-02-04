@@ -2,8 +2,8 @@
  * Klados invocation utilities for testing
  */
 
-import { apiRequest } from './client';
-import type { InvokeResult, InvokeKladosOptions } from './types';
+import { apiRequest } from './client.js';
+import type { InvokeResult, InvokeKladosOptions } from './types.js';
 
 /**
  * Invoke a klados worker

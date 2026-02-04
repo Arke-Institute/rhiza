@@ -2,14 +2,14 @@
  * Entity and collection operations for klados testing
  */
 
-import { apiRequest } from './client';
+import { apiRequest } from './client.js';
 import type {
   Entity,
   Collection,
   CollectionEntities,
   CreateEntityOptions,
   CreateCollectionOptions,
-} from './types';
+} from './types.js';
 
 /**
  * Create a new entity
@@ -48,10 +48,18 @@ export async function getEntity(id: string): Promise<Entity> {
 /**
  * Delete an entity
  *
+ * Fetches the entity tip first for CAS protection, then deletes.
+ *
  * @param id - Entity ID to delete
  */
 export async function deleteEntity(id: string): Promise<void> {
-  await apiRequest('DELETE', `/entities/${id}`);
+  // Get current tip for CAS
+  const tip = await apiRequest<{ cid: string }>('GET', `/entities/${id}/tip`);
+
+  // Delete with expect_tip
+  await apiRequest('DELETE', `/entities/${id}`, {
+    expect_tip: tip.cid,
+  });
 }
 
 /**

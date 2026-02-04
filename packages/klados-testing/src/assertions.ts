@@ -2,7 +2,7 @@
  * Test assertions for klados logs
  */
 
-import type { KladosLogEntry, LogMessage, LogMessageCriteria } from './types';
+import type { KladosLogEntry, LogMessage, LogMessageCriteria } from './types.js';
 
 /**
  * Assert that a klados log completed successfully

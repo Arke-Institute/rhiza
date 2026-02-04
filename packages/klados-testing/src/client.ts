@@ -2,7 +2,7 @@
  * API client utilities for klados testing
  */
 
-import type { TestConfig } from './types';
+import type { TestConfig } from './types.js';
 
 // Global configuration
 let globalConfig: TestConfig | null = null;
@@ -65,9 +65,13 @@ export async function apiRequest<T>(
   const url = `${config.apiBase}${path}`;
   const headers: Record<string, string> = {
     Authorization: `ApiKey ${config.userKey}`,
-    'Content-Type': 'application/json',
     'X-Arke-Network': config.network,
   };
+
+  // Only set Content-Type when there's a body
+  if (body) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const response = await fetch(url, {
     method,

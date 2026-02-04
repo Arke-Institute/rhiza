@@ -53,16 +53,16 @@
  */
 
 // Configuration
-export { configureTestClient, getConfig, resetTestClient, apiRequest, sleep, log } from './client';
+export { configureTestClient, getConfig, resetTestClient, apiRequest, sleep, log } from './client.js';
 
 // Entity operations
-export { createEntity, getEntity, deleteEntity, createCollection, getCollectionEntities } from './entities';
+export { createEntity, getEntity, deleteEntity, createCollection, getCollectionEntities } from './entities.js';
 
 // Log utilities
-export { getKladosLog, getFirstLogFromCollection, waitForKladosLog, getLogMessages, getLogEntry } from './logs';
+export { getKladosLog, getFirstLogFromCollection, waitForKladosLog, getLogMessages, getLogEntry } from './logs.js';
 
 // Klados invocation
-export { invokeKlados } from './invoke';
+export { invokeKlados } from './invoke.js';
 
 // Assertions
 export {
@@ -71,7 +71,7 @@ export {
   assertLogHasMessages,
   assertLogMessageCount,
   assertLogHasHandoff,
-} from './assertions';
+} from './assertions.js';
 
 // Types
 export type {
@@ -87,4 +87,4 @@ export type {
   InvokeKladosOptions,
   WaitForLogOptions,
   LogMessageCriteria,
-} from './types';
+} from './types.js';

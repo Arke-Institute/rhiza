@@ -2,8 +2,8 @@
  * Klados log utilities for testing
  */
 
-import { apiRequest, sleep } from './client';
-import type { Entity, KladosLogEntry, WaitForLogOptions } from './types';
+import { apiRequest, sleep } from './client.js';
+import type { Entity, KladosLogEntry, WaitForLogOptions } from './types.js';
 
 /**
  * Get a klados log entry by ID
