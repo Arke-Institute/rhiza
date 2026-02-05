@@ -186,7 +186,7 @@ export async function invokeKlados(
         input: request.input,
         expires_in: expiresIn,
         confirm: true,
-        rhiza_context: request.rhiza,
+        rhiza: request.rhiza,
       } as any,
     });
 

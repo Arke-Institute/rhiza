@@ -212,6 +212,10 @@ async function handlePass(
 
 /**
  * Handle a scatter handoff (1:N fan-out)
+ *
+ * Scatter can work with or without gather:
+ * - With gather: creates batch entity for coordination, last slot triggers gather
+ * - Without gather: just invokes targets in parallel, each completes independently
  */
 async function handleScatter(
   then: { scatter: string; route?: import('../types').RouteRule[] },
@@ -249,51 +253,101 @@ async function handleScatter(
   // Discover target type
   const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.pi);
 
-  // Find the gather target step name from the scatter target's flow step
+  // Find the gather target step name from the scatter target's flow step (optional)
   const gatherStepName = findGatherTarget(flow, targetStepName);
-  if (!gatherStepName) {
-    throw new Error(`Scatter target step '${targetStepName}' does not have a gather handoff`);
+
+  // If there's a gather, use batch coordination
+  if (gatherStepName) {
+    // Look up the gather klados
+    const gatherStep = flow[gatherStepName];
+    if (!gatherStep) {
+      throw new Error(`Gather step '${gatherStepName}' not found in flow`);
+    }
+
+    // Create scatter batch and invoke targets
+    const scatterResult = await createScatterBatch({
+      client,
+      rhizaId,
+      jobId,
+      targetCollection: context.targetCollection,
+      jobCollectionId,
+      sourceKladosId: kladosId,
+      targetStepName,
+      targetKladosId: targetKladosRef.pi,
+      targetType,
+      gatherStepName,
+      gatherKladosId: gatherStep.klados.pi,
+      outputs,
+      fromLogId,
+      apiBase,
+      expiresIn,
+      network,
+      path,
+    });
+
+    return {
+      action: 'scatter',
+      target: targetKladosRef.pi,
+      targetType,
+      invocations: scatterResult.invocations,
+      batch: scatterResult.batch,
+      handoffRecord: {
+        type: 'scatter',
+        target: targetKladosRef.pi,
+        target_type: targetType,
+        batch_id: scatterResult.batchId,
+        invocations: scatterResult.invocations,
+      },
+    };
   }
 
-  // Look up the gather klados
-  const gatherStep = flow[gatherStepName];
-  if (!gatherStep) {
-    throw new Error(`Gather step '${gatherStepName}' not found in flow`);
-  }
-
-  // Create scatter batch and invoke targets
-  const scatterResult = await createScatterBatch({
-    client,
-    rhizaId,
-    jobId,
+  // No gather - simple fan-out where each branch completes independently
+  // Invoke targets directly without batch coordination
+  const newPath = [...path, targetStepName];
+  const invokeOptions: InvokeOptions = {
     targetCollection: context.targetCollection,
     jobCollectionId,
-    sourceKladosId: kladosId,
-    targetStepName,
-    targetKladosId: targetKladosRef.pi,
-    targetType,
-    gatherStepName,
-    gatherKladosId: gatherStep.klados.pi,
-    outputs,
-    fromLogId,
     apiBase,
     expiresIn,
     network,
-    path,
-  });
+    parentLogs: [fromLogId],
+    rhiza: {
+      id: rhizaId,
+      path: newPath,
+    },
+  };
+
+  // Invoke target for each output (with concurrency limit)
+  const concurrency = 10;
+  const invocations: InvocationRecord[] = [];
+
+  for (let i = 0; i < outputs.length; i += concurrency) {
+    const chunk = outputs.slice(i, i + concurrency);
+    const chunkPromises = chunk.map(async (output) => {
+      const result = await invokeTarget(
+        client,
+        targetKladosRef.pi,
+        targetType,
+        output,
+        invokeOptions
+      );
+      return result.invocation;
+    });
+
+    const chunkResults = await Promise.all(chunkPromises);
+    invocations.push(...chunkResults);
+  }
 
   return {
     action: 'scatter',
     target: targetKladosRef.pi,
     targetType,
-    invocations: scatterResult.invocations,
-    batch: scatterResult.batch,
+    invocations,
     handoffRecord: {
       type: 'scatter',
       target: targetKladosRef.pi,
       target_type: targetType,
-      batch_id: scatterResult.batchId,
-      invocations: scatterResult.invocations,
+      invocations,
     },
   };
 }

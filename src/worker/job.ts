@@ -277,7 +277,7 @@ export class KladosJob {
           flow: this.flow,
           outputs,
           outputProperties,
-          fromLogId: this.logId,
+          fromLogId: this.logFileId!, // Actual entity ID, not the logical log ID
           path: this.request.rhiza.path,
           apiBase: this.request.api_base,
           network: this.request.network,
