@@ -132,14 +132,21 @@ export async function invokeKlados(
   options: InvokeOptions
 ): Promise<InvokeResult> {
   const jobId = `job_${generateId()}`;
-  const isMany = Array.isArray(entityTarget);
   const expiresIn = options.expiresIn ?? 3600;
+
+  // Normalize target: single-element array becomes single entity
+  // This handles the common case of pass handoffs returning [entityId]
+  // while the target klados expects cardinality: one
+  const isArray = Array.isArray(entityTarget);
+  const isSingleElementArray = isArray && entityTarget.length === 1;
+  const targetEntity = isArray ? (isSingleElementArray ? entityTarget[0] : undefined) : entityTarget;
+  const targetEntities = isArray && !isSingleElementArray ? entityTarget : undefined;
 
   // Build the klados request (for logging/replay)
   const request: KladosRequest = {
     job_id: jobId,
-    target_entity: isMany ? undefined : entityTarget,
-    target_entities: isMany ? entityTarget : undefined,
+    target_entity: targetEntity,
+    target_entities: targetEntities,
     target_collection: options.targetCollection,
     job_collection: options.jobCollectionId,
     api_base: options.apiBase,
@@ -166,23 +173,21 @@ export async function invokeKlados(
   };
 
   try {
-    // Map to API format (will be updated when API supports new format)
-    // For now, API expects: target, target_collection, job_collection
-    const apiTarget = request.target_entity ?? request.target_entities?.[0] ?? '';
-
     // Invoke via POST /kladoi/:id/invoke
-    // TODO: Update body schema when API supports new target fields
+    // Note: API expects target_entity/target_entities but SDK types use 'target'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await client.api.POST('/kladoi/{id}/invoke', {
       params: { path: { id: kladosId } },
       body: {
-        target: apiTarget,
+        target_entity: request.target_entity,
+        target_entities: request.target_entities,
         target_collection: request.target_collection,
         job_collection: request.job_collection,
         input: request.input,
         expires_in: expiresIn,
         confirm: true,
         rhiza_context: request.rhiza,
-      },
+      } as any,
     });
 
     if (error) {

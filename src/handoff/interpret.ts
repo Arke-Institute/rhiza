@@ -191,6 +191,11 @@ async function handlePass(
     invokeOptions
   );
 
+  // Check if invoke was accepted
+  if (!result.accepted) {
+    throw new Error(`Handoff invoke failed: ${result.error || 'Unknown error'}`);
+  }
+
   return {
     action: 'pass',
     target: targetKladosRef.pi,

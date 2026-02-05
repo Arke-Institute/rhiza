@@ -217,8 +217,8 @@ export async function createRhiza(
 /**
  * Get all klados log entities from a job collection
  *
- * Uses the collection's relationships to find all logs.
- * Note: This may be affected by indexing lag for recently created logs.
+ * Queries the collection for all klados_log type entities.
+ * All workflow logs are stored in the same job collection.
  *
  * @param jobCollectionId - Job collection ID
  * @returns Array of klados log entries
@@ -226,39 +226,26 @@ export async function createRhiza(
 export async function getWorkflowLogs(
   jobCollectionId: string
 ): Promise<KladosLogEntry[]> {
-  // Get the collection with its relationships
-  const collection = await apiRequest<Entity>(
-    'GET',
-    `/entities/${jobCollectionId}`
-  );
+  // Query collection for all klados_log entities
+  const response = await apiRequest<{
+    entities: Array<{ pi: string }>;
+  }>('GET', `/collections/${jobCollectionId}/entities?type=klados_log`);
 
-  // Find all log relationships (first_log and any contains relationships to logs)
-  const logIds = new Set<string>();
-
-  // Add first_log if present
-  const firstLogRel = collection.relationships?.find(
-    (r) => r.predicate === 'first_log'
-  );
-  if (firstLogRel) {
-    logIds.add(firstLogRel.peer);
+  if (!response.entities?.length) {
+    return [];
   }
 
-  // Add any contained klados_log entities
-  const containsRels = collection.relationships?.filter(
-    (r) => r.predicate === 'contains' && r.peer_type === 'klados_log'
-  );
-  for (const rel of containsRels ?? []) {
-    logIds.add(rel.peer);
-  }
-
-  // Fetch all logs
+  // Fetch full entity details for each log
   const logs: KladosLogEntry[] = [];
-  for (const logId of logIds) {
+  for (const entity of response.entities) {
     try {
-      const log = await apiRequest<KladosLogEntry>('GET', `/entities/${logId}`);
+      const log = await apiRequest<KladosLogEntry>(
+        'GET',
+        `/entities/${entity.pi}`
+      );
       logs.push(log);
     } catch {
-      // Log may not exist yet, skip
+      // Log may not exist yet or fetch failed, skip
     }
   }
 
