@@ -192,6 +192,62 @@ export interface WaitForLogOptions {
   pollInterval?: number;
 }
 
+// =============================================================================
+// Log Tree Types
+// =============================================================================
+
+/**
+ * A node in the workflow log tree
+ */
+export interface LogTreeNode {
+  /** The log entry at this node */
+  log: KladosLogEntry;
+  /** Child nodes (logs that have this log in their from_logs) */
+  children: LogTreeNode[];
+  /** Whether this node is a leaf (no children expected) */
+  isLeaf: boolean;
+  /** Whether this log is terminal (done or error) */
+  isTerminal: boolean;
+  /** Number of expected children based on handoffs (may differ from actual) */
+  expectedChildren: number;
+}
+
+/**
+ * Result of building/traversing a workflow log tree
+ */
+export interface WorkflowLogTree {
+  /** Root log node (found via first_log relationship) */
+  root: LogTreeNode | null;
+  /** All discovered logs indexed by entity ID */
+  logs: Map<string, KladosLogEntry>;
+  /** Whether the entire workflow has completed (all branches terminal) */
+  isComplete: boolean;
+  /** Whether any branch has errors */
+  hasErrors: boolean;
+  /** All leaf nodes in the tree */
+  leaves: LogTreeNode[];
+  /** All errors in the tree */
+  errors: Array<{
+    logId: string;
+    kladosId: string;
+    error: { code: string; message: string; retryable: boolean };
+  }>;
+  /** Whether all expected children have been discovered */
+  allChildrenDiscovered: boolean;
+}
+
+/**
+ * Options for waiting for workflow tree completion
+ */
+export interface WaitForWorkflowTreeOptions {
+  /** Maximum time to wait in milliseconds (default: 30000) */
+  timeout?: number;
+  /** Poll interval in milliseconds (default: 2000) */
+  pollInterval?: number;
+  /** Callback for each poll iteration (for debugging/logging) */
+  onPoll?: (tree: WorkflowLogTree, elapsed: number) => void;
+}
+
 /**
  * Criteria for matching a log message
  */

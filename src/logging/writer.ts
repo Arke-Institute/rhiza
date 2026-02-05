@@ -171,6 +171,58 @@ export async function writeKladosLog(
     );
   }
 
+  // 5. Update parent logs to add sent_to relationship pointing to this log
+  // This enables traversal using only outgoing relationships (no indexing lag)
+  if (hasParentLogs) {
+    const parentLogIds = entry.received.from_logs!;
+    const batchContext = entry.received.batch;
+
+    // Determine concurrency based on context:
+    // - Scatter: many siblings update same parent → use batch.total
+    // - Gather/Pass: only this child updates each parent → use 1
+    const isScatterChild = batchContext && parentLogIds.length === 1;
+    const concurrencyPerParent = isScatterChild ? batchContext.total : 1;
+
+    // Batch parallel updates for gather scenarios (many parents)
+    const PARENT_UPDATE_BATCH_SIZE = 100;
+
+    for (let i = 0; i < parentLogIds.length; i += PARENT_UPDATE_BATCH_SIZE) {
+      const parentBatch = parentLogIds.slice(i, i + PARENT_UPDATE_BATCH_SIZE);
+
+      await Promise.all(
+        parentBatch.map((parentLogId) =>
+          withCasRetry(
+            {
+              getTip: async () => {
+                const { data, error } = await client.api.GET('/entities/{id}/tip', {
+                  params: { path: { id: parentLogId } },
+                });
+                if (error || !data) throw new Error(`Failed to get parent log tip: ${parentLogId}`);
+                return data.cid;
+              },
+              update: async (tip: string) => {
+                return client.api.PUT('/entities/{id}', {
+                  params: { path: { id: parentLogId } },
+                  body: {
+                    expect_tip: tip,
+                    relationships_add: [
+                      {
+                        predicate: 'sent_to',
+                        peer: logEntityId,
+                        direction: 'outgoing',
+                      },
+                    ],
+                  },
+                });
+              },
+            },
+            { concurrency: concurrencyPerParent }
+          )
+        )
+      );
+    }
+  }
+
   return { logId: entry.id, fileId: logEntityId };
 }
 

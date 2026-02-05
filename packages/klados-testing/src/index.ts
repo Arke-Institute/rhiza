@@ -59,7 +59,17 @@ export { configureTestClient, getConfig, resetTestClient, apiRequest, sleep, log
 export { createEntity, getEntity, deleteEntity, createCollection, getCollectionEntities } from './entities.js';
 
 // Log utilities
-export { getKladosLog, getFirstLogFromCollection, waitForKladosLog, getLogMessages, getLogEntry } from './logs.js';
+export {
+  getKladosLog,
+  getFirstLogFromCollection,
+  waitForKladosLog,
+  getLogMessages,
+  getLogEntry,
+  // Tree-based traversal
+  getLogChildren,
+  buildWorkflowTree,
+  waitForWorkflowTree,
+} from './logs.js';
 
 // Klados invocation
 export { invokeKlados } from './invoke.js';
@@ -97,6 +107,10 @@ export type {
   InvokeKladosOptions,
   WaitForLogOptions,
   LogMessageCriteria,
+  // Log tree types
+  LogTreeNode,
+  WorkflowLogTree,
+  WaitForWorkflowTreeOptions,
 } from './types.js';
 
 // Workflow types
