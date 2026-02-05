@@ -26,8 +26,8 @@ export interface InvokeRhizaOptions {
   targetEntity?: string;
   /** Multiple entities to process (for entry klados with cardinality: 'many') */
   targetEntities?: string[];
-  /** Job collection for logs */
-  jobCollection: string;
+  /** Job collection for logs (optional - API creates one if not provided) */
+  jobCollection?: string;
   /** Execute (true) or preview (false) */
   confirm?: boolean;
   /** Optional input data passed to entry klados */
@@ -134,9 +134,12 @@ export async function invokeRhiza(
 ): Promise<InvokeRhizaResult> {
   const body: Record<string, unknown> = {
     target_collection: options.targetCollection,
-    job_collection: options.jobCollection,
     confirm: options.confirm ?? true,
   };
+
+  if (options.jobCollection) {
+    body.job_collection = options.jobCollection;
+  }
 
   if (options.targetEntity) {
     body.target_entity = options.targetEntity;
