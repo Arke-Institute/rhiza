@@ -31,9 +31,12 @@ export async function invokeKlados(
 ): Promise<InvokeResult> {
   const body: Record<string, unknown> = {
     target_collection: options.targetCollection,
-    job_collection: options.jobCollection,
     confirm: options.confirm ?? true,
   };
+
+  if (options.jobCollection) {
+    body.job_collection = options.jobCollection;
+  }
 
   if (options.targetEntity) {
     body.target_entity = options.targetEntity;

@@ -174,8 +174,8 @@ export interface InvokeKladosOptions {
   targetEntity?: string;
   /** Multiple entities to process (for cardinality: 'many') */
   targetEntities?: string[];
-  /** Job collection for logs */
-  jobCollection: string;
+  /** Job collection for logs (optional - API creates one if not provided) */
+  jobCollection?: string;
   /** Execute (true) or preview (false) */
   confirm?: boolean;
   /** Optional input data */
