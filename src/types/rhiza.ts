@@ -34,10 +34,10 @@ export interface RhizaProperties {
   /** Semantic version */
   version: string;
 
-  /** Entry point - reference to the klados that starts the workflow */
-  entry: EntityRef;
+  /** Entry point - step name that starts the workflow */
+  entry: string;
 
-  /** Flow definition - what happens after each klados */
+  /** Flow definition - maps step names to their klados and handoff spec */
   flow: Record<string, FlowStep>;
 
   /** Status */
@@ -49,10 +49,16 @@ export interface RhizaProperties {
 }
 
 /**
- * FlowStep - What happens after a klados completes
+ * FlowStep - A step in the workflow
+ *
+ * Each step specifies which klados to invoke and what happens after it completes.
+ * Step names (flow keys) can be arbitrary - the same klados can appear in multiple steps.
  */
 export interface FlowStep {
-  /** Handoff specification */
+  /** Which klados to invoke for this step */
+  klados: EntityRef;
+
+  /** Handoff specification - what happens after this step completes */
   then: ThenSpec;
 }
 
@@ -60,14 +66,14 @@ export interface FlowStep {
  * ThenSpec - Handoff specification
  *
  * Three core operations: pass, scatter, gather (+ done for terminal)
- * - Target is an EntityRef (type hint avoids runtime discovery)
- * - Route conditions can be added to any operation via `route` array
+ * - Target is a step name (string) referring to another step in the flow
+ * - Route conditions can override the default target based on output properties
  */
 export type ThenSpec =
-  | { done: true }                                    // Terminal - workflow ends
-  | { pass: EntityRef; route?: RouteRule[] }         // 1:1 - target reference
-  | { scatter: EntityRef; route?: RouteRule[] }      // 1:N fan-out - target reference
-  | { gather: EntityRef; route?: RouteRule[] };      // N:1 fan-in - target reference
+  | { done: true }                              // Terminal - workflow ends
+  | { pass: string; route?: RouteRule[] }       // 1:1 - target step name
+  | { scatter: string; route?: RouteRule[] }    // 1:N fan-out - target step name
+  | { gather: string; route?: RouteRule[] };    // N:1 fan-in - target step name
 
 /**
  * RouteRule - Conditional routing rule
@@ -79,8 +85,8 @@ export interface RouteRule {
   /** Condition to match (supports AND/OR logic) */
   where: WhereCondition;
 
-  /** Target reference if condition matches (overrides default) */
-  target: EntityRef;
+  /** Target step name if condition matches (overrides default) */
+  target: string;
 }
 
 /**

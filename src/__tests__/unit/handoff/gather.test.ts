@@ -31,6 +31,8 @@ describe('Gather', () => {
         rhiza_id: 'II01rhiza_test',
         job_id: 'job-root',
         source_klados: 'II01klados_producer',
+        target_step: 'worker',
+        gather_step: 'aggregator',
         gather_klados: 'II01klados_aggregator',
         total,
         completed: completedSlots.length,

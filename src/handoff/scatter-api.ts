@@ -34,14 +34,20 @@ export interface CreateScatterOptions {
   /** Klados ID that created this batch */
   sourceKladosId: string;
 
-  /** Target klados or rhiza ID */
-  targetId: string;
+  /** Target step name in the flow */
+  targetStepName: string;
+
+  /** Target klados ID for invocation */
+  targetKladosId: string;
 
   /** Whether target is klados or rhiza */
   targetType: 'klados' | 'rhiza';
 
+  /** Gather step name in the flow */
+  gatherStepName: string;
+
   /** Klados ID that will receive gathered results */
-  gatherTargetId: string;
+  gatherKladosId: string;
 
   /** Output entity IDs to scatter */
   outputs: string[];
@@ -96,9 +102,11 @@ export async function createScatterBatch(
     targetCollection,
     jobCollectionId,
     sourceKladosId,
-    targetId,
+    targetStepName,
+    targetKladosId,
     targetType,
-    gatherTargetId,
+    gatherStepName,
+    gatherKladosId,
     outputs,
     fromLogId,
     apiBase,
@@ -113,7 +121,9 @@ export async function createScatterBatch(
     rhiza_id: rhizaId,
     job_id: jobId,
     source_klados: sourceKladosId,
-    gather_klados: gatherTargetId,
+    target_step: targetStepName,
+    gather_step: gatherStepName,
+    gather_klados: gatherKladosId,
     total: outputs.length,
     completed: 0,
     status: 'pending',
@@ -145,6 +155,9 @@ export async function createScatterBatch(
   // 2. Invoke target for each output with concurrency limit
   const invocations: InvocationRecord[] = [];
 
+  // Build the new path by appending the target step name
+  const newPath = [...path, targetStepName];
+
   // Process outputs in chunks for concurrency control
   for (let i = 0; i < outputs.length; i += concurrency) {
     const chunk = outputs.slice(i, i + concurrency);
@@ -165,13 +178,13 @@ export async function createScatterBatch(
         },
         rhiza: {
           id: rhizaId,
-          path,
+          path: newPath,
         },
       };
 
       const result = await invokeTarget(
         client,
-        targetId,
+        targetKladosId,
         targetType,
         output,
         invokeOptions

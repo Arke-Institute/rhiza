@@ -149,10 +149,11 @@ export async function invokeKlados(
   };
 
   // Add rhiza context if present
+  // Note: path already includes the target step name (set by buildInvokeOptions)
   if (options.rhiza) {
     request.rhiza = {
       id: options.rhiza.id,
-      path: [...options.rhiza.path, kladosId],
+      path: options.rhiza.path,
       parent_logs: options.parentLogs,
       batch: options.batch,
     };

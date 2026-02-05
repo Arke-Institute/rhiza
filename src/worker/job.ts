@@ -259,7 +259,12 @@ export class KladosJob {
 
     // Execute workflow handoff if in a workflow
     if (this.request.rhiza && this.flow) {
-      const myStep = this.flow[this.config.agentId];
+      // Look up current step by path (last element is current step name)
+      const currentStepName = this.request.rhiza.path?.at(-1);
+      if (!currentStepName) {
+        throw new Error('Missing step name in rhiza path');
+      }
+      const myStep = this.flow[currentStepName];
 
       if (myStep?.then) {
         handoffResult = await interpretThen(myStep.then, {

@@ -21,6 +21,12 @@ export interface BatchProperties {
   /** Klados ID that created this batch */
   source_klados: string;
 
+  /** Target step name in the flow */
+  target_step: string;
+
+  /** Gather step name in the flow */
+  gather_step: string;
+
   /** Klados ID that receives gathered results */
   gather_klados: string;
 

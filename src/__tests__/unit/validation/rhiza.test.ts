@@ -5,12 +5,19 @@
  * at creation/update time (static validation).
  *
  * Validation Rules:
- * - entry: Required, must be in flow
+ * - entry: Required, must be in flow (step name)
  * - flow: Required, non-empty
- * - All targets must exist in flow (or be external rhiza IDs)
+ * - Each step must have klados field
+ * - All targets must exist in flow (step names)
  * - All paths must terminate (done: true)
  * - No cycles allowed
  * - Route rules must have valid where and target
+ *
+ * NOTE: Uses step-based flow format where:
+ * - entry is a step name (string)
+ * - flow keys are step names
+ * - each step has { klados: EntityRef, then: ThenSpec }
+ * - ThenSpec targets are step names (strings)
  */
 
 import { describe, it, expect } from 'vitest';
@@ -63,9 +70,9 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Single Klados',
         version: '1.0.0',
-        entry: ref('II01klados_only', { type: 'klados' }),
+        entry: 'only_step',
         flow: {
-          'II01klados_only': { then: { done: true } },
+          'only_step': { klados: ref('II01klados_only', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -80,7 +87,7 @@ describe('validateRhizaProperties', () => {
   // =========================================================================
 
   describe('entry validation', () => {
-    it('fails when entry klados ID is missing', () => {
+    it('fails when entry step name is missing', () => {
       const result = validateRhizaProperties(invalidRhizaProperties.missingEntry);
 
       expect(result.valid).toBe(false);
@@ -92,7 +99,7 @@ describe('validateRhizaProperties', () => {
       );
     });
 
-    it('fails when entry klados ID is not in flow', () => {
+    it('fails when entry step name is not in flow', () => {
       const result = validateRhizaProperties(invalidRhizaProperties.entryNotInFlow);
 
       expect(result.valid).toBe(false);
@@ -108,9 +115,9 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Empty Entry',
         version: '1.0.0',
-        entry: ref(''),
+        entry: '',
         flow: {
-          'II01klados_a': { then: { done: true } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -145,7 +152,7 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Missing Flow',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         status: 'active',
       } as Record<string, unknown>);
 
@@ -163,7 +170,7 @@ describe('validateRhizaProperties', () => {
   // =========================================================================
 
   describe('target validation', () => {
-    it('fails when target klados ID does not exist in flow', () => {
+    it('fails when target step name does not exist in flow', () => {
       const result = validateRhizaProperties(invalidRhizaProperties.targetNotInFlow);
 
       expect(result.valid).toBe(false);
@@ -178,9 +185,9 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Invalid Scatter Target',
         version: '1.0.0',
-        entry: ref('II01klados_producer', { type: 'klados' }),
+        entry: 'producer_step',
         flow: {
-          'II01klados_producer': { then: { scatter: ref('nonexistent', { type: 'klados' }) } },
+          'producer_step': { klados: ref('II01klados_producer', { type: 'klados' }), then: { scatter: 'nonexistent_step' } },
         },
         status: 'active',
       });
@@ -197,9 +204,9 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Invalid Gather Target',
         version: '1.0.0',
-        entry: ref('II01klados_worker', { type: 'klados' }),
+        entry: 'worker_step',
         flow: {
-          'II01klados_worker': { then: { gather: ref('nonexistent', { type: 'klados' }) } },
+          'worker_step': { klados: ref('II01klados_worker', { type: 'klados' }), then: { gather: 'nonexistent_step' } },
         },
         status: 'active',
       });
@@ -233,10 +240,10 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Simple Cycle',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': { then: { pass: ref('II01klados_b', { type: 'klados' }) } },
-          'II01klados_b': { then: { pass: ref('II01klados_a', { type: 'klados' }) } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { pass: 'step_a' } },
         },
         status: 'active',
       });
@@ -253,9 +260,9 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Self Reference',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': { then: { pass: ref('II01klados_a', { type: 'klados' }) } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_a' } },
         },
         status: 'active',
       });
@@ -281,28 +288,27 @@ describe('validateRhizaProperties', () => {
   // =========================================================================
 
   describe('unreachable detection', () => {
-    it('warns about unreachable klados IDs', () => {
-      const result = validateRhizaProperties(invalidRhizaProperties.unreachableKlados);
+    it('warns about unreachable steps', () => {
+      const result = validateRhizaProperties(invalidRhizaProperties.unreachableStep);
 
       // Valid but with warning
       expect(result.valid).toBe(true);
       expect(result.warnings).toContainEqual(
         expect.objectContaining({
           code: 'UNREACHABLE_KLADOS',
-          klados_id: 'II01klados_orphan',
         })
       );
     });
 
-    it('warns about multiple unreachable kladoi', () => {
+    it('warns about multiple unreachable steps', () => {
       const result = validateRhizaProperties({
         label: 'Multiple Orphans',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': { then: { done: true } },
-          'II01klados_orphan1': { then: { done: true } },
-          'II01klados_orphan2': { then: { pass: ref('II01klados_orphan1', { type: 'klados' }) } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { done: true } },
+          'orphan_step_1': { klados: ref('II01klados_orphan1', { type: 'klados' }), then: { done: true } },
+          'orphan_step_2': { klados: ref('II01klados_orphan2', { type: 'klados' }), then: { pass: 'orphan_step_1' } },
         },
         status: 'active',
       });
@@ -343,9 +349,9 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Terminal Test',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': { then: { done: true } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -357,10 +363,10 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Pass Test',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': { then: { pass: ref('II01klados_b', { type: 'klados' }) } },
-          'II01klados_b': { then: { done: true } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -372,10 +378,10 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Scatter Test',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': { then: { scatter: ref('II01klados_b', { type: 'klados' }) } },
-          'II01klados_b': { then: { done: true } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { scatter: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -387,10 +393,10 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Gather Test',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': { then: { gather: ref('II01klados_b', { type: 'klados' }) } },
-          'II01klados_b': { then: { done: true } },
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { gather: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -408,16 +414,17 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Missing Where',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
-              route: [{ target: ref('II01klados_c', { type: 'klados' }) }] as unknown as RouteRule[],
+              pass: 'step_b',
+              route: [{ target: 'step_c' }] as unknown as RouteRule[],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -434,15 +441,16 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Missing Target',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [{ where: { property: 'type', equals: 'test' } }] as unknown as RouteRule[],
             },
           },
-          'II01klados_b': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -459,18 +467,19 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Valid Route',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [
-                { where: { property: 'type', equals: 'special' }, target: ref('II01klados_c', { type: 'klados' }) },
+                { where: { property: 'type', equals: 'special' }, target: 'step_c' },
               ],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -482,11 +491,12 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'AND Route',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [
                 {
                   where: {
@@ -495,13 +505,13 @@ describe('validateRhizaProperties', () => {
                       { property: 'size', equals: 'large' },
                     ],
                   },
-                  target: ref('II01klados_c', { type: 'klados' }),
+                  target: 'step_c',
                 },
               ],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -513,11 +523,12 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'OR Route',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [
                 {
                   where: {
@@ -526,13 +537,13 @@ describe('validateRhizaProperties', () => {
                       { property: 'type', equals: 'png' },
                     ],
                   },
-                  target: ref('II01klados_c', { type: 'klados' }),
+                  target: 'step_c',
                 },
               ],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -544,11 +555,12 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Nested Route',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [
                 {
                   where: {
@@ -562,13 +574,13 @@ describe('validateRhizaProperties', () => {
                       },
                     ],
                   },
-                  target: ref('II01klados_c', { type: 'klados' }),
+                  target: 'step_c',
                 },
               ],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -580,21 +592,22 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Invalid Where',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [
                 {
                   where: { invalid: 'condition' } as unknown as { property: string; equals: string },
-                  target: ref('II01klados_c', { type: 'klados' }),
+                  target: 'step_c',
                 },
               ],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -611,21 +624,22 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Empty AND',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [
                 {
                   where: { and: [] },
-                  target: ref('II01klados_c', { type: 'klados' }),
+                  target: 'step_c',
                 },
               ],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -642,21 +656,22 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Empty OR',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_b', { type: 'klados' }),
+              pass: 'step_b',
               route: [
                 {
                   where: { or: [] },
-                  target: ref('II01klados_c', { type: 'klados' }),
+                  target: 'step_c',
                 },
               ],
             },
           },
-          'II01klados_b': { then: { done: true } },
-          'II01klados_c': { then: { done: true } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -700,22 +715,23 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Multiple Routes',
         version: '1.0.0',
-        entry: ref('II01klados_a', { type: 'klados' }),
+        entry: 'step_a',
         flow: {
-          'II01klados_a': {
+          'step_a': {
+            klados: ref('II01klados_a', { type: 'klados' }),
             then: {
-              pass: ref('II01klados_default', { type: 'klados' }),
+              pass: 'step_default',
               route: [
-                { where: { property: 'type', equals: 'pdf' }, target: ref('II01klados_pdf', { type: 'klados' }) },
-                { where: { property: 'type', equals: 'image' }, target: ref('II01klados_image', { type: 'klados' }) },
-                { where: { property: 'type', equals: 'text' }, target: ref('II01klados_text', { type: 'klados' }) },
+                { where: { property: 'type', equals: 'pdf' }, target: 'step_pdf' },
+                { where: { property: 'type', equals: 'image' }, target: 'step_image' },
+                { where: { property: 'type', equals: 'text' }, target: 'step_text' },
               ],
             },
           },
-          'II01klados_default': { then: { done: true } },
-          'II01klados_pdf': { then: { done: true } },
-          'II01klados_image': { then: { done: true } },
-          'II01klados_text': { then: { done: true } },
+          'step_default': { klados: ref('II01klados_default', { type: 'klados' }), then: { done: true } },
+          'step_pdf': { klados: ref('II01klados_pdf', { type: 'klados' }), then: { done: true } },
+          'step_image': { klados: ref('II01klados_image', { type: 'klados' }), then: { done: true } },
+          'step_text': { klados: ref('II01klados_text', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });
@@ -727,13 +743,29 @@ describe('validateRhizaProperties', () => {
       const result = validateRhizaProperties({
         label: 'Deep Flow',
         version: '1.0.0',
-        entry: ref('II01klados_1', { type: 'klados' }),
+        entry: 'step_1',
         flow: {
-          'II01klados_1': { then: { pass: ref('II01klados_2', { type: 'klados' }) } },
-          'II01klados_2': { then: { pass: ref('II01klados_3', { type: 'klados' }) } },
-          'II01klados_3': { then: { pass: ref('II01klados_4', { type: 'klados' }) } },
-          'II01klados_4': { then: { pass: ref('II01klados_5', { type: 'klados' }) } },
-          'II01klados_5': { then: { done: true } },
+          'step_1': { klados: ref('II01klados_1', { type: 'klados' }), then: { pass: 'step_2' } },
+          'step_2': { klados: ref('II01klados_2', { type: 'klados' }), then: { pass: 'step_3' } },
+          'step_3': { klados: ref('II01klados_3', { type: 'klados' }), then: { pass: 'step_4' } },
+          'step_4': { klados: ref('II01klados_4', { type: 'klados' }), then: { pass: 'step_5' } },
+          'step_5': { klados: ref('II01klados_5', { type: 'klados' }), then: { done: true } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('allows same klados in multiple steps', () => {
+      const result = validateRhizaProperties({
+        label: 'Duplicate Klados',
+        version: '1.0.0',
+        entry: 'first_stamp',
+        flow: {
+          'first_stamp': { klados: ref('II01klados_stamp', { type: 'klados' }), then: { pass: 'second_stamp' } },
+          'second_stamp': { klados: ref('II01klados_stamp', { type: 'klados' }), then: { pass: 'third_stamp' } },
+          'third_stamp': { klados: ref('II01klados_stamp', { type: 'klados' }), then: { done: true } },
         },
         status: 'active',
       });

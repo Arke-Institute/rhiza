@@ -3,9 +3,15 @@
  *
  * Validates rhiza entity properties at creation/update time (static validation).
  * This ensures rhiza definitions are structurally correct.
+ *
+ * NOTE: Uses step-based flow format where:
+ * - entry is a step name (string)
+ * - flow keys are step names
+ * - each step has { klados: EntityRef, then: ThenSpec }
+ * - ThenSpec targets are step names (strings)
  */
 
-import type { RhizaProperties, FlowStep, ThenSpec, RouteRule, WhereCondition, EntityRef } from '../types';
+import type { RhizaProperties, FlowStep, ThenSpec, RouteRule, WhereCondition } from '../types';
 import { isEntityRef } from '../types';
 import type { ValidationResult, ValidationError, ValidationWarning } from './validate-klados';
 
@@ -13,10 +19,11 @@ import type { ValidationResult, ValidationError, ValidationWarning } from './val
  * Validate rhiza properties (static validation)
  *
  * Checks:
- * - entry: Required, must be in flow
+ * - entry: Required, must be in flow (step name)
  * - flow: Required, non-empty
- * - All targets in flow must exist
- * - All paths must terminate (done: true or external rhiza)
+ * - Each step must have klados field
+ * - All targets in flow must exist (step names)
+ * - All paths must terminate (done: true)
  * - No cycles allowed
  * - Route rules must have where and target
  */
@@ -30,7 +37,7 @@ export function validateRhizaProperties(
   if (!properties) {
     errors.push({
       code: 'MISSING_ENTRY',
-      message: 'Rhiza must have an entry klados ID',
+      message: 'Rhiza must have an entry step name',
       field: 'entry',
     });
     errors.push({
@@ -41,23 +48,11 @@ export function validateRhizaProperties(
     return { valid: false, errors, warnings };
   }
 
-  // Entry required and must be valid EntityRef
-  if (!properties.entry) {
+  // Entry required and must be a non-empty string (step name)
+  if (!properties.entry || typeof properties.entry !== 'string') {
     errors.push({
       code: 'MISSING_ENTRY',
-      message: 'Rhiza must have an entry klados reference',
-      field: 'entry',
-    });
-  } else if (!isEntityRef(properties.entry)) {
-    errors.push({
-      code: 'INVALID_ENTRY',
-      message: 'Rhiza entry must be an EntityRef with a pi field',
-      field: 'entry',
-    });
-  } else if (!properties.entry.pi) {
-    errors.push({
-      code: 'MISSING_ENTRY',
-      message: 'Rhiza entry reference must have a non-empty pi field',
+      message: 'Rhiza must have an entry step name',
       field: 'entry',
     });
   }
@@ -72,39 +67,39 @@ export function validateRhizaProperties(
     return { valid: false, errors, warnings };
   }
 
-  // Entry must be in flow (extract pi from EntityRef)
-  const entryId = isEntityRef(properties.entry) ? properties.entry.pi : null;
-  if (entryId && !properties.flow[entryId]) {
+  // Entry must be in flow
+  const entryStepName = properties.entry;
+  if (entryStepName && typeof entryStepName === 'string' && !properties.flow[entryStepName]) {
     errors.push({
       code: 'ENTRY_NOT_IN_FLOW',
-      message: `Entry klados '${entryId}' is not in flow`,
+      message: `Entry step '${entryStepName}' is not in flow`,
       field: 'entry',
     });
   }
 
   // Validate each flow step
-  for (const [kladosId, step] of Object.entries(properties.flow)) {
-    validateFlowStep(kladosId, step, properties.flow, errors, warnings);
+  for (const [stepName, step] of Object.entries(properties.flow)) {
+    validateFlowStep(stepName, step, properties.flow, errors, warnings);
   }
 
   // Check all paths terminate (also detects cycles)
-  if (entryId && properties.flow[entryId]) {
+  if (entryStepName && typeof entryStepName === 'string' && properties.flow[entryStepName]) {
     const terminationResult = validateAllPathsTerminate(
-      entryId,
+      entryStepName,
       properties.flow
     );
     errors.push(...terminationResult.errors);
   }
 
-  // Check for unreachable kladoi
-  if (entryId && properties.flow[entryId]) {
-    const reachable = findReachableIds(entryId, properties.flow);
-    for (const kladosId of Object.keys(properties.flow)) {
-      if (!reachable.has(kladosId)) {
+  // Check for unreachable steps
+  if (entryStepName && typeof entryStepName === 'string' && properties.flow[entryStepName]) {
+    const reachable = findReachableSteps(entryStepName, properties.flow);
+    for (const stepName of Object.keys(properties.flow)) {
+      if (!reachable.has(stepName)) {
         warnings.push({
           code: 'UNREACHABLE_KLADOS',
-          message: `Klados '${kladosId}' is not reachable from entry`,
-          klados_id: kladosId,
+          message: `Step '${stepName}' is not reachable from entry`,
+          klados_id: stepName,
         });
       }
     }
@@ -121,29 +116,38 @@ export function validateRhizaProperties(
  * Validate a single flow step
  */
 function validateFlowStep(
-  kladosId: string,
+  stepName: string,
   step: FlowStep,
   flow: Record<string, FlowStep>,
   errors: ValidationError[],
   warnings: ValidationWarning[]
 ): void {
+  // Each step must have a klados field
+  if (!step.klados || !isEntityRef(step.klados)) {
+    errors.push({
+      code: 'MISSING_KLADOS',
+      message: `Flow step '${stepName}' is missing 'klados' field or has invalid format`,
+      klados_id: stepName,
+    });
+  }
+
   if (!step.then) {
     errors.push({
       code: 'MISSING_THEN',
-      message: `Flow step for '${kladosId}' is missing 'then' specification`,
-      klados_id: kladosId,
+      message: `Flow step '${stepName}' is missing 'then' specification`,
+      klados_id: stepName,
     });
     return;
   }
 
-  validateThen(kladosId, step.then, flow, errors, warnings);
+  validateThen(stepName, step.then, flow, errors, warnings);
 }
 
 /**
  * Validate a then spec
  */
 function validateThen(
-  kladosId: string,
+  stepName: string,
   then: ThenSpec,
   flow: Record<string, FlowStep>,
   errors: ValidationError[],
@@ -155,33 +159,33 @@ function validateThen(
   }
 
   if ('pass' in then) {
-    validateTarget(kladosId, 'pass', then.pass, flow, errors);
+    validateTarget(stepName, 'pass', then.pass, flow, errors);
     if (then.route) {
-      validateRouteRules(kladosId, then.route, flow, errors, warnings);
+      validateRouteRules(stepName, then.route, flow, errors, warnings);
     }
     return;
   }
 
   if ('scatter' in then) {
-    validateTarget(kladosId, 'scatter', then.scatter, flow, errors);
+    validateTarget(stepName, 'scatter', then.scatter, flow, errors);
     if (then.route) {
-      validateRouteRules(kladosId, then.route, flow, errors, warnings);
+      validateRouteRules(stepName, then.route, flow, errors, warnings);
     }
     return;
   }
 
   if ('gather' in then) {
-    validateTarget(kladosId, 'gather', then.gather, flow, errors);
+    validateTarget(stepName, 'gather', then.gather, flow, errors);
     if (then.route) {
-      validateRouteRules(kladosId, then.route, flow, errors, warnings);
+      validateRouteRules(stepName, then.route, flow, errors, warnings);
     }
     return;
   }
 
   errors.push({
     code: 'INVALID_HANDOFF',
-    message: `Unknown handoff type in '${kladosId}': ${JSON.stringify(then)}`,
-    klados_id: kladosId,
+    message: `Unknown handoff type in '${stepName}': ${JSON.stringify(then)}`,
+    klados_id: stepName,
   });
 }
 
@@ -189,7 +193,7 @@ function validateThen(
  * Validate route rules on a handoff
  */
 function validateRouteRules(
-  kladosId: string,
+  stepName: string,
   routes: RouteRule[],
   _flow: Record<string, FlowStep>,
   errors: ValidationError[],
@@ -201,24 +205,18 @@ function validateRouteRules(
     if (!rule.where) {
       errors.push({
         code: 'INVALID_ROUTE_RULE',
-        message: `Route rule ${i} in '${kladosId}' is missing 'where' condition`,
-        klados_id: kladosId,
+        message: `Route rule ${i} in '${stepName}' is missing 'where' condition`,
+        klados_id: stepName,
       });
     } else {
-      validateWhereCondition(kladosId, rule.where, i, errors);
+      validateWhereCondition(stepName, rule.where, i, errors);
     }
 
-    if (!rule.target) {
+    if (!rule.target || typeof rule.target !== 'string') {
       errors.push({
         code: 'INVALID_ROUTE_RULE',
-        message: `Route rule ${i} in '${kladosId}' is missing 'target'`,
-        klados_id: kladosId,
-      });
-    } else if (!isEntityRef(rule.target)) {
-      errors.push({
-        code: 'INVALID_TARGET',
-        message: `Route rule ${i} target in '${kladosId}' must be an EntityRef with a pi field`,
-        klados_id: kladosId,
+        message: `Route rule ${i} in '${stepName}' is missing 'target' or target is not a string`,
+        klados_id: stepName,
       });
     }
   }
@@ -228,7 +226,7 @@ function validateRouteRules(
  * Validate a where condition (recursive for AND/OR)
  */
 function validateWhereCondition(
-  kladosId: string,
+  stepName: string,
   where: WhereCondition,
   ruleIndex: number,
   errors: ValidationError[]
@@ -238,8 +236,8 @@ function validateWhereCondition(
     if (typeof where.property !== 'string') {
       errors.push({
         code: 'INVALID_WHERE_CONDITION',
-        message: `Route rule ${ruleIndex} in '${kladosId}': 'property' must be a string`,
-        klados_id: kladosId,
+        message: `Route rule ${ruleIndex} in '${stepName}': 'property' must be a string`,
+        klados_id: stepName,
       });
     }
     return;
@@ -250,13 +248,13 @@ function validateWhereCondition(
     if (!Array.isArray(where.and) || where.and.length === 0) {
       errors.push({
         code: 'INVALID_WHERE_CONDITION',
-        message: `Route rule ${ruleIndex} in '${kladosId}': 'and' must be a non-empty array`,
-        klados_id: kladosId,
+        message: `Route rule ${ruleIndex} in '${stepName}': 'and' must be a non-empty array`,
+        klados_id: stepName,
       });
       return;
     }
     for (const condition of where.and) {
-      validateWhereCondition(kladosId, condition, ruleIndex, errors);
+      validateWhereCondition(stepName, condition, ruleIndex, errors);
     }
     return;
   }
@@ -266,56 +264,52 @@ function validateWhereCondition(
     if (!Array.isArray(where.or) || where.or.length === 0) {
       errors.push({
         code: 'INVALID_WHERE_CONDITION',
-        message: `Route rule ${ruleIndex} in '${kladosId}': 'or' must be a non-empty array`,
-        klados_id: kladosId,
+        message: `Route rule ${ruleIndex} in '${stepName}': 'or' must be a non-empty array`,
+        klados_id: stepName,
       });
       return;
     }
     for (const condition of where.or) {
-      validateWhereCondition(kladosId, condition, ruleIndex, errors);
+      validateWhereCondition(stepName, condition, ruleIndex, errors);
     }
     return;
   }
 
   errors.push({
     code: 'INVALID_WHERE_CONDITION',
-    message: `Route rule ${ruleIndex} in '${kladosId}': invalid where condition format`,
-    klados_id: kladosId,
+    message: `Route rule ${ruleIndex} in '${stepName}': invalid where condition format`,
+    klados_id: stepName,
   });
 }
 
 /**
- * Validate a target reference
+ * Validate a target step name
  *
- * Note: This only validates that the target is in the flow for static validation.
- * External targets (rhiza IDs) are validated at runtime.
+ * Target must be a string and exist in the flow.
  */
 function validateTarget(
-  sourceKladosId: string,
+  sourceStepName: string,
   handoffType: string,
-  target: EntityRef,
+  target: string,
   flow: Record<string, FlowStep>,
   errors: ValidationError[]
 ): void {
-  if (!target || !isEntityRef(target)) {
+  if (!target || typeof target !== 'string') {
     errors.push({
       code: 'INVALID_TARGET',
-      message: `Invalid target in '${sourceKladosId}' ${handoffType}: must be an EntityRef with a pi field`,
-      klados_id: sourceKladosId,
+      message: `Invalid target in '${sourceStepName}' ${handoffType}: must be a step name string`,
+      klados_id: sourceStepName,
       field: `then.${handoffType}`,
     });
     return;
   }
 
-  const targetId = target.pi;
-
-  // Target must be in flow (for static validation)
-  // At runtime, targets not in flow are resolved as rhiza IDs
-  if (!flow[targetId]) {
+  // Target must be in flow
+  if (!flow[target]) {
     errors.push({
       code: 'INVALID_TARGET',
-      message: `Target '${targetId}' in '${sourceKladosId}' is not in flow`,
-      klados_id: sourceKladosId,
+      message: `Target step '${target}' in '${sourceStepName}' is not in flow`,
+      klados_id: sourceStepName,
       field: `then.${handoffType}`,
     });
   }
@@ -326,7 +320,6 @@ function validateTarget(
  *
  * Traverses all possible paths from entry and ensures each ends in:
  * - done: true (terminal)
- * - A target not in flow (assumed to be a rhiza, validated at runtime)
  *
  * Also detects cycles during traversal.
  */
@@ -350,7 +343,7 @@ function validateAllPathsTerminate(
 
     const step = flow[current];
     if (!step || !step.then) {
-      // Not in flow - assumed to be rhiza target (valid termination)
+      // Not in flow - this would be caught by target validation
       return;
     }
 
@@ -376,7 +369,7 @@ function validateAllPathsTerminate(
 
     for (const target of targets) {
       if (!flow[target]) {
-        // Target not in flow - assumed to be rhiza (valid termination)
+        // Target not in flow - would be caught by target validation
         continue;
       }
       traverse(target, newPath);
@@ -388,8 +381,7 @@ function validateAllPathsTerminate(
 }
 
 /**
- * Extract all possible targets from a ThenSpec (including route alternatives)
- * Returns the pi (ID) strings from EntityRefs
+ * Extract all possible target step names from a ThenSpec (including route alternatives)
  */
 function extractAllTargets(then: ThenSpec): string[] {
   const targets: string[] = [];
@@ -399,28 +391,28 @@ function extractAllTargets(then: ThenSpec): string[] {
   }
 
   if ('pass' in then) {
-    if (isEntityRef(then.pass)) targets.push(then.pass.pi);
+    if (typeof then.pass === 'string') targets.push(then.pass);
     if (then.route) {
       for (const rule of then.route) {
-        if (isEntityRef(rule.target)) targets.push(rule.target.pi);
+        if (typeof rule.target === 'string') targets.push(rule.target);
       }
     }
   }
 
   if ('scatter' in then) {
-    if (isEntityRef(then.scatter)) targets.push(then.scatter.pi);
+    if (typeof then.scatter === 'string') targets.push(then.scatter);
     if (then.route) {
       for (const rule of then.route) {
-        if (isEntityRef(rule.target)) targets.push(rule.target.pi);
+        if (typeof rule.target === 'string') targets.push(rule.target);
       }
     }
   }
 
   if ('gather' in then) {
-    if (isEntityRef(then.gather)) targets.push(then.gather.pi);
+    if (typeof then.gather === 'string') targets.push(then.gather);
     if (then.route) {
       for (const rule of then.route) {
-        if (isEntityRef(rule.target)) targets.push(rule.target.pi);
+        if (typeof rule.target === 'string') targets.push(rule.target);
       }
     }
   }
@@ -429,9 +421,9 @@ function extractAllTargets(then: ThenSpec): string[] {
 }
 
 /**
- * Find all IDs reachable from entry
+ * Find all step names reachable from entry
  */
-function findReachableIds(
+function findReachableSteps(
   entry: string,
   flow: Record<string, FlowStep>
 ): Set<string> {

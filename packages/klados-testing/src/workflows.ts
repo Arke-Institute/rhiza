@@ -62,6 +62,12 @@ export interface WorkflowCompletionResult {
 
 /**
  * Options for creating a rhiza entity
+ *
+ * Uses step-based flow format where:
+ * - entry is a step name (string)
+ * - flow keys are step names
+ * - each step has { klados: { pi: string }, then: ThenSpec }
+ * - ThenSpec targets are step names (strings)
  */
 export interface CreateRhizaOptions {
   /** Display label for the rhiza */
@@ -70,9 +76,9 @@ export interface CreateRhizaOptions {
   description?: string;
   /** Version string */
   version: string;
-  /** Entry klados ID (first step in workflow) */
+  /** Entry step name (first step in workflow) */
   entry: string;
-  /** Flow definition - maps klados IDs to their handoff specs */
+  /** Flow definition - maps step names to their klados and handoff specs */
   flow: Record<string, FlowStep>;
   /** Collection to store the rhiza entity */
   collectionId: string;
@@ -82,17 +88,21 @@ export interface CreateRhizaOptions {
  * A step in the workflow flow definition
  */
 export interface FlowStep {
+  /** Which klados to invoke for this step */
+  klados: { pi: string; type?: string };
+  /** What happens after this step completes */
   then: ThenSpec;
 }
 
 /**
  * Handoff specification for a workflow step
+ * Targets are step names (strings), not klados IDs
  */
 export type ThenSpec =
   | { done: true }
-  | { pass: string }
-  | { scatter: string }
-  | { gather: string };
+  | { pass: string; route?: unknown[] }
+  | { scatter: string; route?: unknown[] }
+  | { gather: string; route?: unknown[] };
 
 // =============================================================================
 // Rhiza Invocation
@@ -154,15 +164,18 @@ export async function invokeRhiza(
 /**
  * Create a rhiza workflow entity on the Arke network
  *
+ * Uses step-based format where step names are the flow keys
+ * and the same klados can be used in multiple steps.
+ *
  * @example
  * ```typescript
  * const rhiza = await createRhiza({
  *   label: 'Stamp Chain',
- *   version: '1.0',
- *   entry: 'klados_stamp_1',
+ *   version: '2.0',
+ *   entry: 'first_stamp',
  *   flow: {
- *     'klados_stamp_1': { then: { pass: 'klados_stamp_2' } },
- *     'klados_stamp_2': { then: { done: true } },
+ *     'first_stamp': { klados: { pi: 'klados_stamp' }, then: { pass: 'second_stamp' } },
+ *     'second_stamp': { klados: { pi: 'klados_stamp' }, then: { done: true } },
  *   },
  *   collectionId: collection.id,
  * });
@@ -178,15 +191,10 @@ export async function createRhiza(
     label: options.label,
     version: options.version,
     status: 'active',
-    entry: { pi: options.entry },
-    flow: Object.fromEntries(
-      Object.entries(options.flow).map(([kladosId, step]) => [
-        kladosId,
-        {
-          then: formatThenSpec(step.then),
-        },
-      ])
-    ),
+    // Entry is now a step name (string), not an EntityRef
+    entry: options.entry,
+    // Flow is passed through directly - already in the correct format
+    flow: options.flow,
   };
 
   if (options.description) {
@@ -200,25 +208,6 @@ export async function createRhiza(
   });
 
   return result;
-}
-
-/**
- * Format a ThenSpec for the API
- */
-function formatThenSpec(spec: ThenSpec): Record<string, unknown> {
-  if ('done' in spec) {
-    return { done: true };
-  }
-  if ('pass' in spec) {
-    return { pass: { pi: spec.pass } };
-  }
-  if ('scatter' in spec) {
-    return { scatter: { pi: spec.scatter } };
-  }
-  if ('gather' in spec) {
-    return { gather: { pi: spec.gather } };
-  }
-  throw new Error(`Unknown ThenSpec type: ${JSON.stringify(spec)}`);
 }
 
 // =============================================================================

@@ -9,7 +9,6 @@ import type { ArkeClient } from '@arke-institute/sdk';
 import type {
   ThenSpec,
   FlowStep,
-  EntityRef,
   BatchContext,
   BatchEntity,
   HandoffRecord,
@@ -159,27 +158,34 @@ export async function interpretThen(
  * Handle a pass handoff (1:1 direct)
  */
 async function handlePass(
-  then: { pass: EntityRef; route?: import('../types').RouteRule[] },
+  then: { pass: string; route?: import('../types').RouteRule[] },
   context: InterpretContext
 ): Promise<InterpretResult> {
-  const { client, outputs, outputProperties } = context;
+  const { client, flow, outputs, outputProperties } = context;
 
-  // Resolve target (may be overridden by route)
-  const targetRef = resolveTarget(then, outputProperties ?? {});
-  if (!targetRef) {
+  // Resolve target step name (may be overridden by route)
+  const targetStepName = resolveTarget(then, outputProperties ?? {});
+  if (!targetStepName) {
     throw new Error('Failed to resolve target for pass handoff');
   }
 
-  // Discover target type (or use type hint)
-  const targetType = targetRef.type || await discoverTargetType(client, targetRef.pi);
+  // Look up the klados for the target step
+  const targetStep = flow[targetStepName];
+  if (!targetStep) {
+    throw new Error(`Target step '${targetStepName}' not found in flow`);
+  }
+  const targetKladosRef = targetStep.klados;
 
-  // Build invoke options
-  const invokeOptions = buildInvokeOptions(context);
+  // Discover target type (klados or rhiza) - always klados for flow steps
+  const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.pi);
 
-  // Invoke the target
+  // Build invoke options with updated path
+  const invokeOptions = buildInvokeOptions(context, targetStepName);
+
+  // Invoke the target klados
   const result = await invokeTarget(
     client,
-    targetRef.pi,
+    targetKladosRef.pi,
     targetType,
     outputs,
     invokeOptions
@@ -187,12 +193,12 @@ async function handlePass(
 
   return {
     action: 'pass',
-    target: targetRef.pi,
+    target: targetKladosRef.pi,
     targetType,
     invocations: [result.invocation],
     handoffRecord: {
       type: 'pass',
-      target: targetRef.pi,
+      target: targetKladosRef.pi,
       target_type: targetType,
       invocations: [result.invocation],
     },
@@ -203,7 +209,7 @@ async function handlePass(
  * Handle a scatter handoff (1:N fan-out)
  */
 async function handleScatter(
-  then: { scatter: EntityRef; route?: import('../types').RouteRule[] },
+  then: { scatter: string; route?: import('../types').RouteRule[] },
   context: InterpretContext
 ): Promise<InterpretResult> {
   const {
@@ -222,19 +228,32 @@ async function handleScatter(
     path,
   } = context;
 
-  // Resolve target (may be overridden by route)
-  const targetRef = resolveTarget(then, outputProperties ?? {});
-  if (!targetRef) {
+  // Resolve target step name (may be overridden by route)
+  const targetStepName = resolveTarget(then, outputProperties ?? {});
+  if (!targetStepName) {
     throw new Error('Failed to resolve target for scatter handoff');
   }
 
-  // Discover target type
-  const targetType = targetRef.type || await discoverTargetType(client, targetRef.pi);
+  // Look up the klados for the target step
+  const targetStep = flow[targetStepName];
+  if (!targetStep) {
+    throw new Error(`Target step '${targetStepName}' not found in flow`);
+  }
+  const targetKladosRef = targetStep.klados;
 
-  // Find the gather target from the scatter target's flow step
-  const gatherTargetRef = findGatherTarget(flow, targetRef.pi);
-  if (!gatherTargetRef) {
-    throw new Error(`Scatter target '${targetRef.pi}' does not have a gather handoff`);
+  // Discover target type
+  const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.pi);
+
+  // Find the gather target step name from the scatter target's flow step
+  const gatherStepName = findGatherTarget(flow, targetStepName);
+  if (!gatherStepName) {
+    throw new Error(`Scatter target step '${targetStepName}' does not have a gather handoff`);
+  }
+
+  // Look up the gather klados
+  const gatherStep = flow[gatherStepName];
+  if (!gatherStep) {
+    throw new Error(`Gather step '${gatherStepName}' not found in flow`);
   }
 
   // Create scatter batch and invoke targets
@@ -245,9 +264,11 @@ async function handleScatter(
     targetCollection: context.targetCollection,
     jobCollectionId,
     sourceKladosId: kladosId,
-    targetId: targetRef.pi,
+    targetStepName,
+    targetKladosId: targetKladosRef.pi,
     targetType,
-    gatherTargetId: gatherTargetRef.pi,
+    gatherStepName,
+    gatherKladosId: gatherStep.klados.pi,
     outputs,
     fromLogId,
     apiBase,
@@ -258,13 +279,13 @@ async function handleScatter(
 
   return {
     action: 'scatter',
-    target: targetRef.pi,
+    target: targetKladosRef.pi,
     targetType,
     invocations: scatterResult.invocations,
     batch: scatterResult.batch,
     handoffRecord: {
       type: 'scatter',
-      target: targetRef.pi,
+      target: targetKladosRef.pi,
       target_type: targetType,
       batch_id: scatterResult.batchId,
       invocations: scatterResult.invocations,
@@ -276,10 +297,10 @@ async function handleScatter(
  * Handle a gather handoff (N:1 fan-in)
  */
 async function handleGather(
-  then: { gather: EntityRef; route?: import('../types').RouteRule[] },
+  then: { gather: string; route?: import('../types').RouteRule[] },
   context: InterpretContext
 ): Promise<InterpretResult> {
-  const { client, outputs, outputProperties, batchContext } = context;
+  const { client, flow, outputs, outputProperties, batchContext } = context;
 
   // Gather requires batch context
   if (!batchContext) {
@@ -303,27 +324,34 @@ async function handleGather(
   }
 
   // This is the last slot - trigger gather target
-  // Resolve target (may be overridden by route)
-  const targetRef = resolveTarget(then, outputProperties ?? {});
-  if (!targetRef) {
+  // Resolve target step name (may be overridden by route)
+  const targetStepName = resolveTarget(then, outputProperties ?? {});
+  if (!targetStepName) {
     throw new Error('Failed to resolve target for gather handoff');
   }
 
+  // Look up the klados for the target step
+  const targetStep = flow[targetStepName];
+  if (!targetStep) {
+    throw new Error(`Target step '${targetStepName}' not found in flow`);
+  }
+  const targetKladosRef = targetStep.klados;
+
   // Discover target type
-  const targetType = targetRef.type || await discoverTargetType(client, targetRef.pi);
+  const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.pi);
 
   // Flatten all outputs from all slots
   const allOutputsFlat = slotResult.allOutputs?.flat() ?? [];
 
-  // Build invoke options
-  const invokeOptions = buildInvokeOptions(context);
+  // Build invoke options with the gather step name in path
+  const invokeOptions = buildInvokeOptions(context, targetStepName);
   // Remove batch context - the gather target doesn't get batch context
   delete invokeOptions.batch;
 
   // Invoke the gather target with all outputs
   const result = await invokeTarget(
     client,
-    targetRef.pi,
+    targetKladosRef.pi,
     targetType,
     allOutputsFlat,
     invokeOptions
@@ -331,14 +359,14 @@ async function handleGather(
 
   return {
     action: 'gather_trigger',
-    target: targetRef.pi,
+    target: targetKladosRef.pi,
     targetType,
     invocations: [result.invocation],
     batch: slotResult.batch,
     allOutputs: slotResult.allOutputs,
     handoffRecord: {
       type: 'gather',
-      target: targetRef.pi,
+      target: targetKladosRef.pi,
       target_type: targetType,
       batch_id: batchContext.id,
       invocations: [result.invocation],
@@ -348,8 +376,16 @@ async function handleGather(
 
 /**
  * Build invoke options from context
+ *
+ * @param context - The interpretation context
+ * @param targetStepName - The target step name to append to path (optional for gather)
  */
-function buildInvokeOptions(context: InterpretContext): InvokeOptions {
+function buildInvokeOptions(context: InterpretContext, targetStepName?: string): InvokeOptions {
+  // Build the new path by appending the target step name
+  const newPath = targetStepName
+    ? [...context.path, targetStepName]
+    : context.path;
+
   return {
     targetCollection: context.targetCollection,
     jobCollectionId: context.jobCollectionId,
@@ -360,7 +396,7 @@ function buildInvokeOptions(context: InterpretContext): InvokeOptions {
     batch: context.batchContext,
     rhiza: {
       id: context.rhizaId,
-      path: context.path,
+      path: newPath,
     },
   };
 }

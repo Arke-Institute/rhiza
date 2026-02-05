@@ -1,31 +1,31 @@
 /**
  * Target Resolution
  *
- * Resolves targets from flow steps by evaluating route rules.
+ * Resolves step names from flow steps by evaluating route rules.
  * Pure function - no API calls.
  */
 
-import type { ThenSpec, EntityRef } from '../types';
+import type { ThenSpec } from '../types';
 import { matchRoute } from './route';
 
 /**
- * Resolve the target from a ThenSpec by evaluating route rules
+ * Resolve the target step name from a ThenSpec by evaluating route rules
  *
  * @param then - The ThenSpec to resolve
  * @param properties - The entity properties to match against route rules
- * @returns The resolved EntityRef, or null for done
+ * @returns The resolved step name (string), or null for done
  */
 export function resolveTarget(
   then: ThenSpec,
   properties: Record<string, unknown>
-): EntityRef | null {
+): string | null {
   // Terminal - no target
   if ('done' in then) {
     return null;
   }
 
-  // Get the default target and optional route rules
-  let defaultTarget: EntityRef;
+  // Get the default target step name and optional route rules
+  let defaultTarget: string;
   let route: import('../types').RouteRule[] | undefined;
 
   if ('pass' in then) {

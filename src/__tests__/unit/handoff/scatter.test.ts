@@ -2,6 +2,8 @@
  * Scatter Helper Tests
  *
  * Tests for pure scatter helper functions.
+ *
+ * NOTE: Uses step-based flow format where targets are step names (strings).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -12,27 +14,28 @@ import { ref } from '../../../types';
 
 describe('Scatter', () => {
   describe('findGatherTarget', () => {
-    it('finds gather target from scatter klados flow step', () => {
+    it('finds gather target from scatter step flow step', () => {
       const flow = scatterGatherFlow;
 
-      const result = findGatherTarget(flow, 'II01klados_worker');
+      // Worker step has gather: 'aggregator'
+      const result = findGatherTarget(flow, 'worker');
 
-      expect(result?.pi).toBe('II01klados_aggregator');
+      expect(result).toBe('aggregator');
     });
 
     it('returns gather target when step has gather handoff', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { gather: ref('custom_aggregator') } },
+        worker: { klados: ref('klados_worker'), then: { gather: 'custom_aggregator_step' } },
       };
 
       const result = findGatherTarget(flow, 'worker');
 
-      expect(result?.pi).toBe('custom_aggregator');
+      expect(result).toBe('custom_aggregator_step');
     });
 
     it('returns null when target not in flow', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { gather: ref('aggregator') } },
+        worker: { klados: ref('klados_worker'), then: { gather: 'aggregator' } },
       };
 
       const result = findGatherTarget(flow, 'nonexistent');
@@ -42,7 +45,7 @@ describe('Scatter', () => {
 
     it('returns null when target has done handoff', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { done: true } },
+        worker: { klados: ref('klados_worker'), then: { done: true } },
       };
 
       const result = findGatherTarget(flow, 'worker');
@@ -52,7 +55,7 @@ describe('Scatter', () => {
 
     it('returns null when target has pass handoff', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { pass: ref('next_step') } },
+        worker: { klados: ref('klados_worker'), then: { pass: 'next_step' } },
       };
 
       const result = findGatherTarget(flow, 'worker');
@@ -62,7 +65,7 @@ describe('Scatter', () => {
 
     it('returns null when target has scatter handoff', () => {
       const flow: Record<string, FlowStep> = {
-        worker: { then: { scatter: ref('sub_worker') } },
+        worker: { klados: ref('klados_worker'), then: { scatter: 'sub_worker_step' } },
       };
 
       const result = findGatherTarget(flow, 'worker');
