@@ -190,6 +190,11 @@ export async function createScatterBatch(
         invokeOptions
       );
 
+      // Check if invoke was accepted - log warning but don't fail the scatter
+      if (!result.accepted) {
+        console.warn(`Scatter invoke failed for slot ${globalIndex}: ${result.error}`);
+      }
+
       return result.invocation;
     });
 

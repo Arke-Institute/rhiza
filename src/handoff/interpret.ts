@@ -323,7 +323,8 @@ async function handleScatter(
 
   for (let i = 0; i < outputs.length; i += concurrency) {
     const chunk = outputs.slice(i, i + concurrency);
-    const chunkPromises = chunk.map(async (output) => {
+    const chunkPromises = chunk.map(async (output, chunkIndex) => {
+      const globalIndex = i + chunkIndex;
       const result = await invokeTarget(
         client,
         targetKladosRef.pi,
@@ -331,6 +332,10 @@ async function handleScatter(
         output,
         invokeOptions
       );
+      // Check if invoke was accepted - log warning but don't fail the scatter
+      if (!result.accepted) {
+        console.warn(`Scatter invoke failed for index ${globalIndex}: ${result.error}`);
+      }
       return result.invocation;
     });
 
