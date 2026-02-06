@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./registration": {
+      "types": "./dist/registration/index.d.ts",
+      "import": "./dist/registration/index.js"
     }
   },
   "files": [
@@ -23,7 +27,7 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@arke-institute/sdk": "^2.9.0"
+    "@arke-institute/sdk": "^3.0.0"
   },
   "peerDependenciesMeta": {
     "@arke-institute/sdk": {
@@ -31,7 +35,7 @@
     }
   },
   "devDependencies": {
-    "@arke-institute/sdk": "^2.9.0",
+    "@arke-institute/sdk": "^3.0.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.2",
     "vitest": "^2.0.0"

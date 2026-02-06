@@ -182,3 +182,67 @@ export {
 // ============================================================================
 
 export { generateId } from './utils/id';
+
+// ============================================================================
+// Registration - Entity registration and management utilities
+// ============================================================================
+
+// Types
+export type {
+  Network,
+  KeyStore,
+  RegistrationState,
+  KladosRegistrationState,
+  RhizaRegistrationState,
+  SyncResult,
+  DryRunResult,
+  ApiKeyInfo,
+  ApiKeyCreateResult,
+  ApiKeyRotateResult,
+  KladosConfig,
+  KladosSyncOptions,
+  RhizaConfig,
+  RhizaFlow,
+  RhizaSyncOptions,
+  VerificationConfig,
+  VerificationResponse,
+  VerificationHandlerResult,
+  VerificationTokenResult,
+  VerificationConfirmResult,
+} from './registration';
+
+// State utilities (pure)
+export {
+  SECRET_NAMES,
+  readState,
+  writeState,
+  getStateFilePath,
+  hashConfig,
+  diffConfig,
+  hasConfigChanged,
+} from './registration';
+
+// Verification helper (pure)
+export {
+  buildVerificationResponse,
+  createVerificationHandler,
+} from './registration';
+
+// Collection utilities (SDK)
+export { ensureCollection } from './registration';
+
+// Klados registration (SDK)
+export {
+  syncKlados,
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  rotateApiKey,
+  requestVerification,
+  confirmVerification,
+  activateKlados,
+  runVerificationFlow,
+} from './registration';
+
+// Rhiza registration (SDK)
+export { syncRhiza } from './registration';
