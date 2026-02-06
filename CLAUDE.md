@@ -1,5 +1,7 @@
 # CLAUDE.md - Project Instructions for Claude
 
+> **See also:** `../CLAUDE.md` for workspace overview, `../tasks/lessons.md` for all lessons, `../docs/` for shared documentation.
+
 This is `@arke-institute/rhiza`, a TypeScript library for the Arke workflow protocol.
 
 ## Project Overview
