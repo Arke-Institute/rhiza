@@ -98,7 +98,13 @@ export interface HandoffRecord {
   batch_id?: string;
 
   /** All invocations we made (fire-and-forget) */
-  invocations: InvocationRecord[];
+  invocations?: InvocationRecord[];
+
+  /** Whether scatter was delegated to scatter-utility */
+  delegated?: boolean;
+
+  /** Dispatch ID from scatter-utility (if delegated) */
+  dispatch_id?: string;
 }
 
 /**

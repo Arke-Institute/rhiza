@@ -60,3 +60,9 @@ export type {
   ResumeResult,
   ResumedJob,
 } from './status';
+
+// Config types
+export type {
+  RhizaRuntimeConfig,
+  ScatterUtilityConfig,
+} from './config';

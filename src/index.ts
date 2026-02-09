@@ -145,6 +145,22 @@ export {
   type InterpretResult,
 } from './handoff/interpret';
 
+export {
+  delegateToScatterUtility,
+  type DelegateScatterOptions,
+  type DelegateScatterResult,
+} from './handoff/scatter-delegate';
+
+// Runtime configuration
+export {
+  SCATTER_UTILITY_URL,
+  DEFAULT_SCATTER_THRESHOLD,
+} from './types/config';
+export type {
+  RhizaRuntimeConfig,
+  ScatterUtilityConfig,
+} from './types/config';
+
 // ============================================================================
 // Logging - In-memory logger and API writers
 // ============================================================================

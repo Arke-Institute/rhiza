@@ -18,6 +18,7 @@ import type {
   HandoffRecord,
   BatchContext,
 } from '../types';
+import type { RhizaRuntimeConfig } from '../types/config';
 import { KladosLogger } from '../logging/logger';
 import { writeKladosLog, updateLogWithHandoffs, updateLogStatus } from '../logging/writer';
 import { interpretThen, type InterpretResult } from '../handoff/interpret';
@@ -92,6 +93,9 @@ export class KladosJob {
   /** Job configuration */
   readonly config: KladosJobConfig;
 
+  /** Rhiza runtime configuration */
+  readonly rhizaConfig?: RhizaRuntimeConfig;
+
   /** Generated log ID */
   readonly logId: string;
 
@@ -105,10 +109,12 @@ export class KladosJob {
    */
   private constructor(
     request: KladosRequest,
-    config: KladosJobConfig
+    config: KladosJobConfig,
+    rhizaConfig?: RhizaRuntimeConfig
   ) {
     this.request = request;
     this.config = config;
+    this.rhizaConfig = rhizaConfig;
     this.log = new KladosLogger();
     this.logId = `log_${generateId()}`;
 
@@ -134,10 +140,15 @@ export class KladosJob {
    *
    * @param request - The incoming KladosRequest
    * @param config - Job configuration
+   * @param rhizaConfig - Optional rhiza runtime configuration (for scatter utility delegation)
    * @returns A new KladosJob instance
    */
-  static accept(request: KladosRequest, config: KladosJobConfig): KladosJob {
-    return new KladosJob(request, config);
+  static accept(
+    request: KladosRequest,
+    config: KladosJobConfig,
+    rhizaConfig?: RhizaRuntimeConfig
+  ): KladosJob {
+    return new KladosJob(request, config, rhizaConfig);
   }
 
   /**
@@ -267,22 +278,27 @@ export class KladosJob {
       const myStep = this.flow[currentStepName];
 
       if (myStep?.then) {
-        handoffResult = await interpretThen(myStep.then, {
-          client: this.client,
-          rhizaId: this.request.rhiza.id,
-          kladosId: this.config.agentId,
-          jobId: this.request.job_id,
-          targetCollection: this.request.target_collection,
-          jobCollectionId: this.request.job_collection,
-          flow: this.flow,
-          outputs,
-          outputProperties,
-          fromLogId: this.logFileId!, // Actual entity ID, not the logical log ID
-          path: this.request.rhiza.path,
-          apiBase: this.request.api_base,
-          network: this.request.network,
-          batchContext: this.request.rhiza.batch,
-        });
+        handoffResult = await interpretThen(
+          myStep.then,
+          {
+            client: this.client,
+            rhizaId: this.request.rhiza.id,
+            kladosId: this.config.agentId,
+            jobId: this.request.job_id,
+            targetCollection: this.request.target_collection,
+            jobCollectionId: this.request.job_collection,
+            flow: this.flow,
+            outputs,
+            outputProperties,
+            fromLogId: this.logFileId!, // Actual entity ID, not the logical log ID
+            path: this.request.rhiza.path,
+            apiBase: this.request.api_base,
+            network: this.request.network,
+            batchContext: this.request.rhiza.batch,
+            authToken: this.config.authToken,
+          },
+          this.rhizaConfig
+        );
 
         if (handoffResult.handoffRecord) {
           handoffs.push(handoffResult.handoffRecord);

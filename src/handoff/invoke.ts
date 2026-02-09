@@ -212,7 +212,7 @@ export async function invokeKlados(
     return {
       jobId,
       accepted: false,
-      error: 'Unexpected response from invoke',
+      error: `Unexpected response from invoke: ${JSON.stringify(data)}`,
       invocation,
     };
   } catch (e) {

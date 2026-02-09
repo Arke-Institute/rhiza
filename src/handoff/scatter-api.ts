@@ -69,6 +69,9 @@ export interface CreateScatterOptions {
 
   /** Concurrency limit for invocations (default: 10) */
   concurrency?: number;
+
+  /** Skip invocations (batch entity only, for scatter-utility delegation) */
+  skipInvocations?: boolean;
 }
 
 /**
@@ -114,6 +117,7 @@ export async function createScatterBatch(
     network,
     path,
     concurrency = 10,
+    skipInvocations = false,
   } = options;
 
   // 1. Create batch entity
@@ -151,6 +155,15 @@ export async function createScatterBatch(
     type: 'batch',
     properties: batchProperties,
   };
+
+  // If skipInvocations is true, return batch entity only (for scatter-utility delegation)
+  if (skipInvocations) {
+    return {
+      batchId: batchEntity.id,
+      batch,
+      invocations: [],
+    };
+  }
 
   // 2. Invoke target for each output with concurrency limit
   const invocations: InvocationRecord[] = [];

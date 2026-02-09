@@ -14,11 +14,17 @@ import type {
   HandoffRecord,
   InvocationRecord,
 } from '../types';
+import {
+  type RhizaRuntimeConfig,
+  SCATTER_UTILITY_URL,
+  DEFAULT_SCATTER_THRESHOLD,
+} from '../types/config';
 import { resolveTarget } from './target';
 import { findGatherTarget } from './scatter';
 import { discoverTargetType, invokeTarget, type InvokeOptions } from './invoke';
 import { createScatterBatch } from './scatter-api';
 import { completeBatchSlotWithCAS } from './gather-api';
+import { delegateToScatterUtility } from './scatter-delegate';
 
 /**
  * Handoff action types
@@ -78,6 +84,9 @@ export interface InterpretContext {
 
   /** Batch context if part of scatter/gather */
   batchContext?: BatchContext;
+
+  /** Auth token for scatter-utility delegation (optional - needed for automatic delegation) */
+  authToken?: string;
 }
 
 /**
@@ -117,11 +126,13 @@ export interface InterpretResult {
  *
  * @param then - The ThenSpec to interpret
  * @param context - The interpretation context
+ * @param config - Optional rhiza runtime configuration (for scatter utility delegation)
  * @returns The interpretation result
  */
 export async function interpretThen(
   then: ThenSpec,
-  context: InterpretContext
+  context: InterpretContext,
+  config?: RhizaRuntimeConfig
 ): Promise<InterpretResult> {
   // ═══════════════════════════════════════════════════════════════
   // Terminal: workflow ends here
@@ -141,7 +152,7 @@ export async function interpretThen(
   // Scatter: 1:N fan-out
   // ═══════════════════════════════════════════════════════════════
   if ('scatter' in then) {
-    return handleScatter(then, context);
+    return handleScatter(then, context, config);
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -216,10 +227,13 @@ async function handlePass(
  * Scatter can work with or without gather:
  * - With gather: creates batch entity for coordination, last slot triggers gather
  * - Without gather: just invokes targets in parallel, each completes independently
+ *
+ * For large scatters (outputs > threshold), delegates to scatter-utility service.
  */
 async function handleScatter(
   then: { scatter: string; route?: import('../types').RouteRule[] },
-  context: InterpretContext
+  context: InterpretContext,
+  config?: RhizaRuntimeConfig
 ): Promise<InterpretResult> {
   const {
     client,
@@ -255,6 +269,136 @@ async function handleScatter(
 
   // Find the gather target step name from the scatter target's flow step (optional)
   const gatherStepName = findGatherTarget(flow, targetStepName);
+
+  // Check if we should delegate to scatter-utility for large scatters
+  // By default, delegation happens automatically for scatters > threshold
+  // unless forceLocal is set or authToken is not available
+  const forceLocal = config?.scatterUtility?.forceLocal === true;
+  const threshold = config?.scatterUtility?.threshold ?? DEFAULT_SCATTER_THRESHOLD;
+  const scatterUrl = config?.scatterUtility?.url ?? SCATTER_UTILITY_URL;
+  const authToken = context.authToken;
+  const shouldDelegate = !forceLocal && !!authToken && outputs.length > threshold;
+
+  if (shouldDelegate) {
+    // Build invoke options for delegation
+    const newPath = [...path, targetStepName];
+    const invokeOptions: InvokeOptions = {
+      targetCollection: context.targetCollection,
+      jobCollectionId,
+      apiBase,
+      expiresIn,
+      network,
+      parentLogs: [fromLogId],
+      rhiza: {
+        id: rhizaId,
+        path: newPath,
+      },
+    };
+
+    // If there's a gather, we need to create the batch entity first for coordination
+    // The scatter-utility will include batch context in each invocation
+    if (gatherStepName) {
+      const gatherStep = flow[gatherStepName];
+      if (!gatherStep) {
+        throw new Error(`Gather step '${gatherStepName}' not found in flow`);
+      }
+
+      // Create batch entity for gather coordination
+      const scatterResult = await createScatterBatch({
+        client,
+        rhizaId,
+        jobId,
+        targetCollection: context.targetCollection,
+        jobCollectionId,
+        sourceKladosId: kladosId,
+        targetStepName,
+        targetKladosId: targetKladosRef.pi,
+        targetType,
+        gatherStepName,
+        gatherKladosId: gatherStep.klados.pi,
+        outputs,
+        fromLogId,
+        apiBase,
+        expiresIn,
+        network,
+        path,
+        // Skip invocations - scatter-utility will handle them
+        skipInvocations: true,
+      });
+
+      // Add batch context to invoke options
+      invokeOptions.batch = {
+        id: scatterResult.batchId,
+        index: 0, // Will be overridden per-item by scatter-utility
+        total: outputs.length,
+      };
+
+      // Delegate to scatter-utility
+      const delegateResult = await delegateToScatterUtility({
+        targetId: targetKladosRef.pi,
+        targetType,
+        outputs,
+        invokeOptions,
+        scatterUtilityUrl: scatterUrl,
+        authToken: authToken!,
+      });
+
+      if (!delegateResult.accepted) {
+        // Fall back to local dispatch with warning
+        console.warn(
+          `Scatter-utility delegation failed: ${delegateResult.error}. ` +
+          `Falling back to local dispatch for ${outputs.length} items.`
+        );
+        // Continue to normal scatter logic below
+      } else {
+        return {
+          action: 'scatter',
+          target: targetKladosRef.pi,
+          targetType,
+          batch: scatterResult.batch,
+          handoffRecord: {
+            type: 'scatter',
+            target: targetKladosRef.pi,
+            target_type: targetType,
+            batch_id: scatterResult.batchId,
+            delegated: true,
+            dispatch_id: delegateResult.dispatchId,
+          },
+        };
+      }
+    } else {
+      // No gather - delegate without batch coordination
+      const delegateResult = await delegateToScatterUtility({
+        targetId: targetKladosRef.pi,
+        targetType,
+        outputs,
+        invokeOptions,
+        scatterUtilityUrl: scatterUrl,
+        authToken: authToken!,
+      });
+
+      if (!delegateResult.accepted) {
+        console.warn(
+          `Scatter-utility delegation failed: ${delegateResult.error}. ` +
+          `Falling back to local dispatch for ${outputs.length} items.`
+        );
+        // Continue to normal scatter logic below
+      } else {
+        return {
+          action: 'scatter',
+          target: targetKladosRef.pi,
+          targetType,
+          handoffRecord: {
+            type: 'scatter',
+            target: targetKladosRef.pi,
+            target_type: targetType,
+            delegated: true,
+            dispatch_id: delegateResult.dispatchId,
+          },
+        };
+      }
+    }
+  }
 
   // If there's a gather, use batch coordination
   if (gatherStepName) {
