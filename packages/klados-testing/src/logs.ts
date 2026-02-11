@@ -123,6 +123,16 @@ export function getLogEntry(log: KladosLogEntry) {
 // =============================================================================
 
 /**
+ * Result of getting log children
+ */
+interface LogChildrenResult {
+  /** Array of child log entity IDs */
+  childIds: string[];
+  /** Total count of sent_to relationships (may be more than childIds if some don't exist yet) */
+  sentToCount: number;
+}
+
+/**
  * Get children of a log by querying for outgoing sent_to relationships
  *
  * In the Rhiza log tree:
@@ -131,41 +141,66 @@ export function getLogEntry(log: KladosLogEntry) {
  * - We use `sent_to` for traversal since it's an outgoing relationship (no indexing lag)
  *
  * @param logEntityId - Log entity ID to find children of
- * @returns Array of child log entity IDs
+ * @returns Object with child IDs and total sent_to count
  */
-export async function getLogChildren(logEntityId: string): Promise<string[]> {
+export async function getLogChildren(logEntityId: string): Promise<LogChildrenResult> {
   try {
     const entity = await apiRequest<Entity>('GET', `/entities/${logEntityId}`);
 
-    // Look for outgoing sent_to relationships
-    // (this log has sent_to pointing to its children)
-    const childIds =
-      entity.relationships
-        ?.filter(
-          (r) => r.predicate === 'sent_to' && r.direction === 'outgoing'
-        )
-        .map((r) => r.peer) ?? [];
+    // Look for sent_to relationships pointing to children
+    // Note: GET /entities/{id} only returns outgoing relationships,
+    // so no direction check is needed.
+    const sentToRels = entity.relationships?.filter((r) => r.predicate === 'sent_to') ?? [];
+    const childIds = sentToRels.map((r) => r.peer);
 
-    return childIds;
+    return {
+      childIds,
+      sentToCount: sentToRels.length,
+    };
   } catch {
-    return [];
+    return { childIds: [], sentToCount: 0 };
   }
+}
+
+/**
+ * Extract expected children count from log messages
+ *
+ * Scatter workers log numCopies in their success message metadata.
+ * This is the most reliable source for expected children count.
+ *
+ * @param log - Log entry to analyze
+ * @returns Number of expected children from messages, or null if not found
+ */
+function extractExpectedChildrenFromMessages(log: KladosLogEntry): number | null {
+  const messages = log.properties.log_data.messages ?? [];
+  for (const msg of messages) {
+    // Check for numCopies in message metadata (from scatter worker)
+    if (msg.metadata?.numCopies !== undefined) {
+      return msg.metadata.numCopies as number;
+    }
+  }
+  return null;
 }
 
 /**
  * Calculate expected children count from handoffs
  *
- * The testing package uses handoff types: 'invoke' | 'scatter' | 'complete' | 'error' | 'none'
- * - 'invoke': Creates 1 child (pass operation)
- * - 'scatter': Creates N children (tracked via job_id, not invocations array in testing types)
- * - 'complete': No children (workflow done)
- * - 'error': No children (error state)
- * - 'none': No children (no handoff)
+ * Priority:
+ * 1. numCopies from log messages (most reliable for scatters)
+ * 2. invocations array length (for local scatters)
+ * 3. Handoff type analysis (pass = 1, etc.)
  *
  * @param log - Log entry to analyze
- * @returns Number of expected children
+ * @returns Number of expected children, or -1 if unknown (keep polling)
  */
 function getExpectedChildrenCount(log: KladosLogEntry): number {
+  // First, check log messages for numCopies (from scatter worker)
+  const numCopies = extractExpectedChildrenFromMessages(log);
+  if (numCopies !== null) {
+    return numCopies;
+  }
+
+  // Fall back to handoff analysis
   const entry = log.properties.log_data.entry;
   const handoffs = entry.handoffs ?? [];
 
@@ -180,10 +215,18 @@ function getExpectedChildrenCount(log: KladosLogEntry): number {
       total += 1;
     } else if (handoff.type === 'scatter') {
       // Scatter creates N children
-      // In the testing types, we don't have invocations array,
-      // so we rely on discovering children via relationships
-      // For now, mark as expecting at least 1 child
-      total += 1; // Will discover actual count via relationships
+      if (handoff.invocations && handoff.invocations.length > 0) {
+        // Use invocations array for local scatters
+        total += handoff.invocations.length;
+      } else if (handoff.delegated) {
+        // Delegated scatter without numCopies in messages yet
+        // Return -1 to indicate we need to keep polling
+        total = -1;
+        break;
+      } else {
+        // Fallback: expect at least 1 child
+        total += 1;
+      }
     }
     // 'complete', 'error', 'none' = 0 children
   }
@@ -234,10 +277,12 @@ async function buildTreeNode(
 
   const isTerminal =
     log.properties.status === 'done' || log.properties.status === 'error';
-  const expectedChildren = getExpectedChildrenCount(log);
 
-  // Find children via incoming relationships
-  const childIds = await getLogChildren(logEntityId);
+  // Find children via sent_to relationships
+  const { childIds } = await getLogChildren(logEntityId);
+
+  // Get expected children count (from log messages or handoff analysis)
+  const expectedChildren = getExpectedChildrenCount(log);
 
   // Recursively build child nodes
   const children: LogTreeNode[] = [];
@@ -276,23 +321,34 @@ function collectLeaves(node: LogTreeNode): LogTreeNode[] {
 /**
  * Check if all expected children have been discovered in the tree
  *
- * For scatter operations, we can't know the exact count from the testing types,
- * so we check if we have at least the minimum expected and all discovered children
- * are themselves complete.
+ * Returns false if:
+ * - We don't know how many children to expect (expectedChildren === -1)
+ * - We have fewer children than expected
+ * - Any child hasn't discovered all its children (recursive)
  */
 function checkAllChildrenDiscovered(node: LogTreeNode): boolean {
-  // If node is running, children may not exist yet
+  // If node is still running, children may not exist yet - assume OK for now
   if (!node.isTerminal) {
-    return true; // Can't verify yet, assume OK for now
+    return true;
   }
 
-  // If we expect children but have none, not complete
-  if (node.expectedChildren > 0 && node.children.length === 0) {
+  // If we don't know expected children count, keep polling
+  if (node.expectedChildren < 0) {
+    return false;
+  }
+
+  // If we have fewer children than expected, not complete
+  if (node.children.length < node.expectedChildren) {
     return false;
   }
 
   // Recursively check all children
-  return node.children.every(checkAllChildrenDiscovered);
+  for (const child of node.children) {
+    if (!checkAllChildrenDiscovered(child)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -444,6 +500,11 @@ export async function waitForWorkflowTree(
     allChildrenDiscovered: false,
   };
 
+  // Track stability: require the same log count for 2 consecutive polls
+  // before declaring complete. This handles async sent_to relationship updates.
+  let stableCount = 0;
+  let lastLogCount = 0;
+
   while (Date.now() - startTime < timeout) {
     try {
       const tree = await buildWorkflowTree(jobCollectionId);
@@ -455,10 +516,25 @@ export async function waitForWorkflowTree(
       }
 
       if (tree.isComplete) {
-        return tree;
+        // Check if the tree is stable (same log count as last poll)
+        if (tree.logs.size === lastLogCount) {
+          stableCount++;
+          // Require 2 stable polls before returning (handles async relationship updates)
+          if (stableCount >= 2) {
+            return tree;
+          }
+        } else {
+          // Log count changed, reset stability counter
+          stableCount = 0;
+        }
+      } else {
+        stableCount = 0;
       }
+
+      lastLogCount = tree.logs.size;
     } catch {
       // Ignore errors during polling, just retry
+      stableCount = 0;
     }
 
     await sleep(pollInterval);

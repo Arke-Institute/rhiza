@@ -34,7 +34,8 @@ export interface Entity {
     predicate: string;
     peer: string;
     peer_type?: string;
-    direction?: 'incoming' | 'outgoing';
+    // Note: GET /entities/{id} only returns outgoing relationships,
+    // so no direction field is included.
   }>;
 }
 
@@ -128,6 +129,15 @@ export interface KladosLogEntry {
           type: 'invoke' | 'scatter' | 'complete' | 'error' | 'none';
           job_id?: string;
           error?: string;
+          /** For scatter: the actual invocations made */
+          invocations?: Array<{
+            target: string;
+            request?: Record<string, unknown>;
+          }>;
+          /** True if scatter was delegated to scatter-utility */
+          delegated?: boolean;
+          /** Dispatch ID for delegated scatters */
+          dispatch_id?: string;
         }>;
         error?: {
           code: string;
