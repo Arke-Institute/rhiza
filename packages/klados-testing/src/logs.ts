@@ -186,15 +186,16 @@ function extractExpectedChildrenFromMessages(log: KladosLogEntry): number | null
  * Calculate expected children count from handoffs
  *
  * Priority:
- * 1. numCopies from log messages (most reliable for scatters)
- * 2. invocations array length (for local scatters)
- * 3. Handoff type analysis (pass = 1, etc.)
+ * 1. numCopies from log messages (worker-provided, legacy support)
+ * 2. outputs array from handoff record (framework-provided, most reliable)
+ * 3. invocations array length (for local scatters without outputs field)
+ * 4. Handoff type analysis (pass = 1, etc.)
  *
  * @param log - Log entry to analyze
  * @returns Number of expected children, or -1 if unknown (keep polling)
  */
 function getExpectedChildrenCount(log: KladosLogEntry): number {
-  // First, check log messages for numCopies (from scatter worker)
+  // First, check log messages for numCopies (from scatter worker - legacy support)
   const numCopies = extractExpectedChildrenFromMessages(log);
   if (numCopies !== null) {
     return numCopies;
@@ -210,16 +211,22 @@ function getExpectedChildrenCount(log: KladosLogEntry): number {
 
   let total = 0;
   for (const handoff of handoffs) {
-    if (handoff.type === 'invoke') {
+    if (handoff.type === 'invoke' || handoff.type === 'pass') {
       // Invoke/pass creates 1 child
       total += 1;
     } else if (handoff.type === 'scatter') {
       // Scatter creates N children
-      if (handoff.invocations && handoff.invocations.length > 0) {
-        // Use invocations array for local scatters
+      // Priority: outputs array (framework-provided) > invocations > unknown
+      if (handoff.outputs && handoff.outputs.length > 0) {
+        // Use outputs array - this is the most reliable source
+        // Subtract done_slots since those don't create children
+        const doneSlots = (handoff as { done_slots?: number }).done_slots ?? 0;
+        total += handoff.outputs.length - doneSlots;
+      } else if (handoff.invocations && handoff.invocations.length > 0) {
+        // Use invocations array for local scatters (legacy)
         total += handoff.invocations.length;
       } else if (handoff.delegated) {
-        // Delegated scatter without numCopies in messages yet
+        // Delegated scatter without outputs field (shouldn't happen with new code)
         // Return -1 to indicate we need to keep polling
         total = -1;
         break;
@@ -227,8 +234,11 @@ function getExpectedChildrenCount(log: KladosLogEntry): number {
         // Fallback: expect at least 1 child
         total += 1;
       }
+    } else if (handoff.type === 'gather') {
+      // Gather creates 1 child (the gather target)
+      total += 1;
     }
-    // 'complete', 'error', 'none' = 0 children
+    // Other types = 0 children
   }
 
   return total;

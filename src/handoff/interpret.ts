@@ -13,13 +13,14 @@ import type {
   BatchEntity,
   HandoffRecord,
   InvocationRecord,
+  Output,
 } from '../types';
 import {
   type RhizaRuntimeConfig,
   SCATTER_UTILITY_URL,
   DEFAULT_SCATTER_THRESHOLD,
 } from '../types/config';
-import { resolveTarget } from './target';
+import { resolveTarget, groupOutputsByTarget, normalizeOutput } from './target';
 import { findGatherTarget } from './scatter';
 import { discoverTargetType, invokeTarget, type InvokeOptions } from './invoke';
 import { createScatterBatch } from './scatter-api';
@@ -61,10 +62,13 @@ export interface InterpretContext {
   /** The rhiza flow definition */
   flow: Record<string, FlowStep>;
 
-  /** Output entity IDs from current klados */
-  outputs: string[];
+  /** Output entities from current klados (string IDs or OutputItem objects) */
+  outputs: Output[];
 
-  /** Properties of the primary output (for routing) */
+  /**
+   * Properties of the primary output (for routing)
+   * @deprecated Use OutputItem objects in outputs array for per-item routing
+   */
   outputProperties?: Record<string, unknown>;
 
   /** Current log entry ID (for chain building) */
@@ -167,56 +171,84 @@ export async function interpretThen(
 
 /**
  * Handle a pass handoff (1:1 direct)
+ *
+ * With per-item routing, outputs are grouped by their resolved target.
+ * Each group is invoked separately. Items routed to "done" are skipped.
  */
 async function handlePass(
   then: { pass: string; route?: import('../types').RouteRule[] },
   context: InterpretContext
 ): Promise<InterpretResult> {
-  const { client, flow, outputs, outputProperties } = context;
+  const { client, flow, outputs } = context;
 
-  // Resolve target step name (may be overridden by route)
-  const targetStepName = resolveTarget(then, outputProperties ?? {});
-  if (!targetStepName) {
-    throw new Error('Failed to resolve target for pass handoff');
+  // Group outputs by their resolved target (per-item routing)
+  const groups = groupOutputsByTarget(outputs, then);
+
+  // Track all invocations across groups
+  const allInvocations: InvocationRecord[] = [];
+  let primaryTarget: string | undefined;
+  let primaryTargetType: 'klados' | 'rhiza' | undefined;
+
+  for (const [targetStepName, items] of groups) {
+    // Skip items routed to "done" - they're complete
+    if (targetStepName === 'done') {
+      continue;
+    }
+
+    // Look up the klados for the target step
+    const targetStep = flow[targetStepName];
+    if (!targetStep) {
+      throw new Error(`Target step '${targetStepName}' not found in flow`);
+    }
+    const targetKladosRef = targetStep.klados;
+
+    // Discover target type (klados or rhiza)
+    const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.pi);
+
+    // Track primary target (first non-done group)
+    if (!primaryTarget) {
+      primaryTarget = targetKladosRef.pi;
+      primaryTargetType = targetType;
+    }
+
+    // Build invoke options with updated path
+    const invokeOptions = buildInvokeOptions(context, targetStepName);
+
+    // Extract entity IDs from items
+    const entityIds = items.map(item => item.entity_id);
+
+    // Invoke the target klados with this group's outputs
+    const result = await invokeTarget(
+      client,
+      targetKladosRef.pi,
+      targetType,
+      entityIds,
+      invokeOptions
+    );
+
+    // Check if invoke was accepted
+    if (!result.accepted) {
+      throw new Error(`Handoff invoke failed: ${result.error || 'Unknown error'}`);
+    }
+
+    allInvocations.push(result.invocation);
   }
 
-  // Look up the klados for the target step
-  const targetStep = flow[targetStepName];
-  if (!targetStep) {
-    throw new Error(`Target step '${targetStepName}' not found in flow`);
-  }
-  const targetKladosRef = targetStep.klados;
-
-  // Discover target type (klados or rhiza) - always klados for flow steps
-  const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.pi);
-
-  // Build invoke options with updated path
-  const invokeOptions = buildInvokeOptions(context, targetStepName);
-
-  // Invoke the target klados
-  const result = await invokeTarget(
-    client,
-    targetKladosRef.pi,
-    targetType,
-    outputs,
-    invokeOptions
-  );
-
-  // Check if invoke was accepted
-  if (!result.accepted) {
-    throw new Error(`Handoff invoke failed: ${result.error || 'Unknown error'}`);
+  // If all items went to "done", this is effectively a terminal
+  if (!primaryTarget) {
+    return { action: 'done' };
   }
 
   return {
     action: 'pass',
-    target: targetKladosRef.pi,
-    targetType,
-    invocations: [result.invocation],
+    target: primaryTarget,
+    targetType: primaryTargetType,
+    invocations: allInvocations,
     handoffRecord: {
       type: 'pass',
-      target: targetKladosRef.pi,
-      target_type: targetType,
-      invocations: [result.invocation],
+      target: primaryTarget,
+      target_type: primaryTargetType!,
+      invocations: allInvocations,
     },
   };
 }
@@ -303,6 +335,9 @@ async function handleScatter(
         throw new Error(`Gather step '${gatherStepName}' not found in flow`);
       }
 
+      // Extract all entity IDs for batch creation (need all slots including "done")
+      const allEntityIds = extractEntityIds(outputs);
+
       // Create batch entity for gather coordination
       const scatterResult = await createScatterBatch({
         client,
@@ -316,7 +351,7 @@ async function handleScatter(
         targetType,
         gatherStepName,
         gatherKladosId: gatherStep.klados.pi,
-        outputs,
+        outputs: allEntityIds,
         fromLogId,
         apiBase,
         expiresIn,
@@ -330,14 +365,80 @@ async function handleScatter(
       invokeOptions.batch = {
         id: scatterResult.batchId,
         index: 0, // Will be overridden per-item by scatter-utility
-        total: outputs.length,
+        total: allEntityIds.length,
       };
 
-      // Delegate to scatter-utility
+      // Build per-item delegate outputs
+      const delegateOutputs: import('./scatter-delegate').DelegateOutputItem[] = [];
+      const doneSlotIndices: number[] = [];
+      let primaryTarget: string | undefined;
+      let primaryTargetType: 'klados' | 'rhiza' | undefined;
+
+      // Process outputs in order to maintain correct batch indices
+      for (let i = 0; i < outputs.length; i++) {
+        const item = normalizeOutput(outputs[i]);
+        const resolvedTarget = resolveTarget(then, item);
+
+        if (resolvedTarget === null || resolvedTarget === 'done') {
+          // Track this slot for immediate completion
+          doneSlotIndices.push(i);
+        } else {
+          // Look up the klados for this target step
+          const step = flow[resolvedTarget];
+          if (!step) {
+            throw new Error(`Target step '${resolvedTarget}' not found in flow`);
+          }
+          const kladosRef = step.klados;
+          const type = kladosRef.type || await discoverTargetType(client, kladosRef.pi);
+
+          // Track primary target (first non-done item)
+          if (!primaryTarget) {
+            primaryTarget = kladosRef.pi;
+            primaryTargetType = type;
+          }
+
+          delegateOutputs.push({
+            id: item.entity_id,
+            target: kladosRef.pi,
+            targetType: type,
+            stepName: resolvedTarget,
+          });
+        }
+      }
+
+      // Mark "done" slots as complete immediately (with their entity ID as output)
+      // This allows the gather to proceed correctly
+      for (const slotIndex of doneSlotIndices) {
+        const slotOutput = [allEntityIds[slotIndex]]; // Pass through the entity ID
+        await completeBatchSlotWithCAS(
+          client,
+          scatterResult.batchId,
+          slotIndex,
+          slotOutput
+        );
+      }
+
+      // If all items went to "done", all slots are complete - return done
+      if (delegateOutputs.length === 0) {
+        return {
+          action: 'scatter',
+          target: targetKladosRef.pi,
+          targetType,
+          batch: scatterResult.batch,
+          handoffRecord: {
+            type: 'scatter',
+            target: targetKladosRef.pi,
+            target_type: targetType,
+            batch_id: scatterResult.batchId,
+            outputs: allEntityIds,
+            done_slots: doneSlotIndices.length,
+          },
+        };
+      }
+
+      // Delegate non-done items to scatter-utility
       const delegateResult = await delegateToScatterUtility({
-        targetId: targetKladosRef.pi,
-        targetType,
-        outputs,
+        outputs: delegateOutputs,
         invokeOptions,
         scatterUtilityUrl: scatterUrl,
         authToken: authToken!,
@@ -353,25 +454,72 @@ async function handleScatter(
       } else {
         return {
           action: 'scatter',
-          target: targetKladosRef.pi,
-          targetType,
+          target: primaryTarget!,
+          targetType: primaryTargetType,
           batch: scatterResult.batch,
           handoffRecord: {
             type: 'scatter',
-            target: targetKladosRef.pi,
-            target_type: targetType,
+            target: primaryTarget!,
+            target_type: primaryTargetType!,
             batch_id: scatterResult.batchId,
+            outputs: allEntityIds,
             delegated: true,
             dispatch_id: delegateResult.dispatchId,
+            done_slots: doneSlotIndices.length,
           },
         };
       }
     } else {
       // No gather - delegate without batch coordination
+      // Include scatterTotal so children know CAS concurrency for parent log updates
+      invokeOptions.scatterTotal = outputs.length;
+
+      // Group outputs by target for per-item routing
+      const groups = groupOutputsByTarget(outputs, then);
+
+      // Build per-item delegate outputs, filtering out "done" items
+      const delegateOutputs: import('./scatter-delegate').DelegateOutputItem[] = [];
+      let primaryTarget: string | undefined;
+      let primaryTargetType: 'klados' | 'rhiza' | undefined;
+
+      for (const [stepName, items] of groups) {
+        // Skip items routed to "done" - they're complete, no invocation needed
+        if (stepName === 'done') {
+          continue;
+        }
+
+        // Look up the klados for this target step
+        const step = flow[stepName];
+        if (!step) {
+          throw new Error(`Target step '${stepName}' not found in flow`);
+        }
+        const kladosRef = step.klados;
+        const type = kladosRef.type || await discoverTargetType(client, kladosRef.pi);
+
+        // Track primary target (first non-done group)
+        if (!primaryTarget) {
+          primaryTarget = kladosRef.pi;
+          primaryTargetType = type;
+        }
+
+        // Add each item with its per-item target
+        for (const item of items) {
+          delegateOutputs.push({
+            id: item.entity_id,
+            target: kladosRef.pi,
+            targetType: type,
+            stepName,
+          });
+        }
+      }
+
+      // If all items went to "done", return done
+      if (delegateOutputs.length === 0) {
+        return { action: 'done' };
+      }
+
       const delegateResult = await delegateToScatterUtility({
-        targetId: targetKladosRef.pi,
-        targetType,
-        outputs,
+        outputs: delegateOutputs,
         invokeOptions,
         scatterUtilityUrl: scatterUrl,
         authToken: authToken!,
@@ -386,12 +534,13 @@ async function handleScatter(
       } else {
         return {
           action: 'scatter',
-          target: targetKladosRef.pi,
-          targetType,
+          target: primaryTarget!,
+          targetType: primaryTargetType,
           handoffRecord: {
             type: 'scatter',
-            target: targetKladosRef.pi,
-            target_type: targetType,
+            target: primaryTarget!,
+            target_type: primaryTargetType!,
+            outputs: extractEntityIds(outputs),
             delegated: true,
             dispatch_id: delegateResult.dispatchId,
           },
@@ -400,7 +549,7 @@ async function handleScatter(
     }
   }
 
-  // If there's a gather, use batch coordination
+  // If there's a gather, use batch coordination with per-item routing
   if (gatherStepName) {
     // Look up the gather klados
     const gatherStep = flow[gatherStepName];
@@ -408,7 +557,13 @@ async function handleScatter(
       throw new Error(`Gather step '${gatherStepName}' not found in flow`);
     }
 
-    // Create scatter batch and invoke targets
+    // Group outputs by target for per-item routing
+    const groups = groupOutputsByTarget(outputs, then);
+
+    // Extract all entity IDs for batch creation (need all slots including "done")
+    const allEntityIds = extractEntityIds(outputs);
+
+    // Create scatter batch without invocations (we'll handle per-item routing)
     const scatterResult = await createScatterBatch({
       client,
       rhizaId,
@@ -421,82 +576,229 @@ async function handleScatter(
       targetType,
       gatherStepName,
       gatherKladosId: gatherStep.klados.pi,
-      outputs,
+      outputs: allEntityIds,
       fromLogId,
       apiBase,
       expiresIn,
       network,
       path,
+      skipInvocations: true,  // We'll handle invocations with per-item routing
     });
+
+    const allInvocations: InvocationRecord[] = [];
+    const doneSlotIndices: number[] = [];
+    let primaryTarget: string | undefined;
+    let primaryTargetType: 'klados' | 'rhiza' | undefined;
+
+    // Find which slots go to "done"
+    for (let i = 0; i < outputs.length; i++) {
+      const item = normalizeOutput(outputs[i]);
+      const resolvedTarget = resolveTarget(then, item);
+
+      if (resolvedTarget === null || resolvedTarget === 'done') {
+        // Mark this slot for immediate completion
+        doneSlotIndices.push(i);
+      }
+    }
+
+    // Mark "done" slots as complete immediately (with their entity ID as output)
+    for (const slotIndex of doneSlotIndices) {
+      const slotOutput = [allEntityIds[slotIndex]];
+      await completeBatchSlotWithCAS(
+        client,
+        scatterResult.batchId,
+        slotIndex,
+        slotOutput
+      );
+    }
+
+    // Invoke non-"done" items with their correct targets
+    for (const [stepName, items] of groups) {
+      // Skip items routed to "done" - already handled above
+      if (stepName === 'done') {
+        continue;
+      }
+
+      // Look up the klados for this target step
+      const step = flow[stepName];
+      if (!step) {
+        throw new Error(`Target step '${stepName}' not found in flow`);
+      }
+      const kladosRef = step.klados;
+      const type = kladosRef.type || await discoverTargetType(client, kladosRef.pi);
+
+      // Track primary target (first non-done group)
+      if (!primaryTarget) {
+        primaryTarget = kladosRef.pi;
+        primaryTargetType = type;
+      }
+
+      // Build invoke options for this target
+      const newPath = [...path, stepName];
+
+      // Find the original indices for these items
+      for (const item of items) {
+        const originalIndex = allEntityIds.indexOf(item.entity_id);
+
+        const invokeOptions: InvokeOptions = {
+          targetCollection: context.targetCollection,
+          jobCollectionId,
+          apiBase,
+          expiresIn,
+          network,
+          parentLogs: [fromLogId],
+          batch: {
+            id: scatterResult.batchId,
+            index: originalIndex,
+            total: allEntityIds.length,
+          },
+          rhiza: {
+            id: rhizaId,
+            path: newPath,
+          },
+        };
+
+        const result = await invokeTarget(
+          client,
+          kladosRef.pi,
+          type,
+          item.entity_id,
+          invokeOptions
+        );
+
+        if (!result.accepted) {
+          console.warn(`Scatter invoke failed for slot ${originalIndex}: ${result.error}`);
+        }
+        allInvocations.push(result.invocation);
+      }
+    }
+
+    // If all items went to "done", return with batch info
+    if (!primaryTarget) {
+      return {
+        action: 'scatter',
+        target: targetKladosRef.pi,
+        targetType,
+        batch: scatterResult.batch,
+        handoffRecord: {
+          type: 'scatter',
+          target: targetKladosRef.pi,
+          target_type: targetType,
+          batch_id: scatterResult.batchId,
+          outputs: allEntityIds,
+          done_slots: doneSlotIndices.length,
+        },
+      };
+    }
 
     return {
       action: 'scatter',
-      target: targetKladosRef.pi,
-      targetType,
-      invocations: scatterResult.invocations,
+      target: primaryTarget,
+      targetType: primaryTargetType,
+      invocations: allInvocations,
       batch: scatterResult.batch,
       handoffRecord: {
         type: 'scatter',
-        target: targetKladosRef.pi,
-        target_type: targetType,
+        target: primaryTarget,
+        target_type: primaryTargetType!,
         batch_id: scatterResult.batchId,
-        invocations: scatterResult.invocations,
+        outputs: allEntityIds,
+        invocations: allInvocations,
+        done_slots: doneSlotIndices.length,
       },
     };
   }
 
   // No gather - simple fan-out where each branch completes independently
-  // Invoke targets directly without batch coordination
-  const newPath = [...path, targetStepName];
-  const invokeOptions: InvokeOptions = {
-    targetCollection: context.targetCollection,
-    jobCollectionId,
-    apiBase,
-    expiresIn,
-    network,
-    parentLogs: [fromLogId],
-    rhiza: {
-      id: rhizaId,
-      path: newPath,
-    },
-  };
+  // Use per-item routing to group outputs by target
+  const groups = groupOutputsByTarget(outputs, then);
 
-  // Invoke target for each output (with concurrency limit)
   const concurrency = 10;
-  const invocations: InvocationRecord[] = [];
+  const allInvocations: InvocationRecord[] = [];
+  let primaryTarget: string | undefined;
+  let primaryTargetType: 'klados' | 'rhiza' | undefined;
 
-  for (let i = 0; i < outputs.length; i += concurrency) {
-    const chunk = outputs.slice(i, i + concurrency);
-    const chunkPromises = chunk.map(async (output, chunkIndex) => {
-      const globalIndex = i + chunkIndex;
-      const result = await invokeTarget(
-        client,
-        targetKladosRef.pi,
-        targetType,
-        output,
-        invokeOptions
-      );
-      // Check if invoke was accepted - log warning but don't fail the scatter
-      if (!result.accepted) {
-        console.warn(`Scatter invoke failed for index ${globalIndex}: ${result.error}`);
-      }
-      return result.invocation;
-    });
+  for (const [stepName, items] of groups) {
+    // Skip items routed to "done" - they're complete, no invocation needed
+    if (stepName === 'done') {
+      continue;
+    }
 
-    const chunkResults = await Promise.all(chunkPromises);
-    invocations.push(...chunkResults);
+    // Look up the klados for this target step
+    const step = flow[stepName];
+    if (!step) {
+      throw new Error(`Target step '${stepName}' not found in flow`);
+    }
+    const kladosRef = step.klados;
+
+    // Discover target type
+    const type = kladosRef.type || await discoverTargetType(client, kladosRef.pi);
+
+    // Track primary target (first non-done group)
+    if (!primaryTarget) {
+      primaryTarget = kladosRef.pi;
+      primaryTargetType = type;
+    }
+
+    // Build invoke options for this target
+    // Include scatterTotal so children know CAS concurrency for parent log updates
+    const newPath = [...path, stepName];
+    const invokeOptions: InvokeOptions = {
+      targetCollection: context.targetCollection,
+      jobCollectionId,
+      apiBase,
+      expiresIn,
+      network,
+      parentLogs: [fromLogId],
+      rhiza: {
+        id: rhizaId,
+        path: newPath,
+      },
+      scatterTotal: outputs.length,
+    };
+
+    // Invoke target for each output in this group (with concurrency limit)
+    const entityIds = items.map(item => item.entity_id);
+
+    for (let i = 0; i < entityIds.length; i += concurrency) {
+      const chunk = entityIds.slice(i, i + concurrency);
+      const chunkPromises = chunk.map(async (entityId, chunkIndex) => {
+        const globalIndex = i + chunkIndex;
+        const result = await invokeTarget(
+          client,
+          kladosRef.pi,
+          type,
+          entityId,
+          invokeOptions
+        );
+        // Check if invoke was accepted - log warning but don't fail the scatter
+        if (!result.accepted) {
+          console.warn(`Scatter invoke failed for ${stepName}[${globalIndex}]: ${result.error}`);
+        }
+        return result.invocation;
+      });
+
+      const chunkResults = await Promise.all(chunkPromises);
+      allInvocations.push(...chunkResults);
+    }
+  }
+
+  // If all items went to "done", this is effectively a terminal
+  if (!primaryTarget) {
+    return { action: 'done' };
   }
 
   return {
     action: 'scatter',
-    target: targetKladosRef.pi,
-    targetType,
-    invocations,
+    target: primaryTarget,
+    targetType: primaryTargetType,
+    invocations: allInvocations,
     handoffRecord: {
       type: 'scatter',
-      target: targetKladosRef.pi,
-      target_type: targetType,
-      invocations,
+      target: primaryTarget,
+      target_type: primaryTargetType!,
+      outputs: extractEntityIds(outputs),
+      invocations: allInvocations,
     },
   };
 }
@@ -515,12 +817,15 @@ async function handleGather(
     throw new Error('Gather handoff requires batch context');
   }
 
+  // Extract entity IDs for batch slot completion
+  const entityIds = extractEntityIds(outputs);
+
   // Complete this slot (CAS retry)
   const slotResult = await completeBatchSlotWithCAS(
     client,
     batchContext.id,
     batchContext.index,
-    outputs
+    entityIds
   );
 
   if (!slotResult.isLast) {
@@ -580,6 +885,13 @@ async function handleGather(
       invocations: [result.invocation],
     },
   };
+}
+
+/**
+ * Extract entity IDs from outputs array
+ */
+function extractEntityIds(outputs: Output[]): string[] {
+  return outputs.map(o => normalizeOutput(o).entity_id);
 }
 
 /**

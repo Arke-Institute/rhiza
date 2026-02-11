@@ -56,6 +56,9 @@ export interface KladosLogEntry {
       total: number;
     };
 
+    /** Total scatter outputs (for scatter without gather, used for CAS concurrency) */
+    scatter_total?: number;
+
     /** The invocation record that created this job (for resume) */
     invocation?: InvocationRecord;
   };
@@ -97,6 +100,13 @@ export interface HandoffRecord {
   /** Batch entity ID (if scatter) */
   batch_id?: string;
 
+  /**
+   * Output entity IDs that were scattered (for scatter handoffs).
+   * Used by tree traversal to determine expected children count.
+   * Expected children = outputs.length - (done_slots || 0)
+   */
+  outputs?: string[];
+
   /** All invocations we made (fire-and-forget) */
   invocations?: InvocationRecord[];
 
@@ -105,6 +115,9 @@ export interface HandoffRecord {
 
   /** Dispatch ID from scatter-utility (if delegated) */
   dispatch_id?: string;
+
+  /** Number of slots routed to "done" (skipped invocation) */
+  done_slots?: number;
 }
 
 /**

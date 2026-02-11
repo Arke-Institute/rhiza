@@ -126,9 +126,11 @@ export interface KladosLogEntry {
         };
         handoffs?: Array<{
           target: string;
-          type: 'invoke' | 'scatter' | 'complete' | 'error' | 'none';
+          type: 'invoke' | 'pass' | 'scatter' | 'gather' | 'complete' | 'error' | 'none';
           job_id?: string;
           error?: string;
+          /** For scatter: output entity IDs (framework-provided, most reliable) */
+          outputs?: string[];
           /** For scatter: the actual invocations made */
           invocations?: Array<{
             target: string;
@@ -138,6 +140,8 @@ export interface KladosLogEntry {
           delegated?: boolean;
           /** Dispatch ID for delegated scatters */
           dispatch_id?: string;
+          /** Number of outputs that went to "done" and were not invoked */
+          done_slots?: number;
         }>;
         error?: {
           code: string;
