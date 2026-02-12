@@ -66,12 +66,19 @@ export async function deleteEntity(id: string): Promise<void> {
  * Create a new collection
  *
  * Uses POST /collections to get proper owner permissions.
+ * By default, collections include standard roles with public *:view access.
  *
  * @example
  * ```typescript
+ * // Minimal - gets default roles
  * const collection = await createCollection({
  *   label: 'Test Collection',
- *   allowedTypes: ['document'],
+ * });
+ *
+ * // Agent-accessible collection
+ * const agentCollection = await createCollection({
+ *   label: 'Agent Collection',
+ *   roles: { public: ['*:view', '*:invoke'] }
  * });
  * ```
  */
@@ -82,6 +89,8 @@ export async function createCollection(
     label: options.label,
     description: options.description,
     allowed_types: options.allowedTypes,
+    roles: options.roles,
+    use_roles_default: options.useRolesDefault,
   });
 }
 

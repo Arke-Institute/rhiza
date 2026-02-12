@@ -169,11 +169,30 @@ export interface CreateEntityOptions {
 
 /**
  * Options for creating a collection
+ *
+ * By default, collections include standard roles (owner, editor, viewer, public).
+ * The public role always includes *:view for platform-wide readability.
+ *
+ * @example
+ * ```typescript
+ * // Minimal - gets all default roles
+ * createCollection({ label: 'My Collection' });
+ *
+ * // Agent-accessible collection
+ * createCollection({
+ *   label: 'Agent Collection',
+ *   roles: { public: ['*:view', '*:invoke'] }
+ * });
+ * ```
  */
 export interface CreateCollectionOptions {
   label: string;
   description?: string;
   allowedTypes?: string[];
+  /** Role definitions mapping role names to action arrays */
+  roles?: Record<string, string[]>;
+  /** Whether to merge with default roles (default: true) */
+  useRolesDefault?: boolean;
 }
 
 /**
