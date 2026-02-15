@@ -26,7 +26,9 @@ export interface RhizaConfig {
 export interface RhizaSyncOptions {
   /** Which network to register on */
   network: Network;
-  /** Collection label (default: 'Rhiza Workflows') */
+  /** Existing collection ID to use (if not provided, creates new collection) */
+  collectionId?: string;
+  /** Collection label for new collection (default: 'Rhiza Workflows') */
   collectionLabel?: string;
 
   /**

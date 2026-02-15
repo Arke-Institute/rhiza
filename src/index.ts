@@ -39,6 +39,8 @@ export type {
   WhereEquals,
   WhereAnd,
   WhereOr,
+  OutputItem,
+  Output,
 } from './types/rhiza';
 
 // Entity reference types
@@ -102,7 +104,7 @@ export { validateRhizaProperties } from './validation/validate-rhiza';
 // ============================================================================
 
 export { evaluateWhere, matchRoute } from './handoff/route';
-export { resolveTarget } from './handoff/target';
+export { resolveTarget, normalizeOutput, groupOutputsByTarget } from './handoff/target';
 export { findGatherTarget } from './handoff/scatter';
 export {
   completeBatchSlot,
@@ -149,6 +151,8 @@ export {
   delegateToScatterUtility,
   type DelegateScatterOptions,
   type DelegateScatterResult,
+  type DelegateOutputItem,
+  type DelegateOutput,
 } from './handoff/scatter-delegate';
 
 // Runtime configuration

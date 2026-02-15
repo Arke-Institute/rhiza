@@ -5,7 +5,7 @@
  * Pure function - no API calls.
  */
 
-import type { ThenSpec } from '../types';
+import type { ThenSpec, Output, OutputItem } from '../types';
 import { matchRoute } from './route';
 
 /**
@@ -55,4 +55,61 @@ export function resolveTarget(
 
   // No route matched - return default
   return defaultTarget;
+}
+
+/**
+ * Normalize an output to OutputItem format
+ *
+ * @param output - String entity ID or OutputItem object
+ * @returns OutputItem with entity_id and any routing properties
+ */
+export function normalizeOutput(output: Output): OutputItem {
+  return typeof output === 'string'
+    ? { entity_id: output }
+    : output;
+}
+
+/**
+ * Group outputs by their resolved target step
+ *
+ * Evaluates route rules for each output item individually and groups them
+ * by their resolved target. Items without matching routes go to the default target.
+ *
+ * @param outputs - Array of outputs (string IDs or OutputItem objects)
+ * @param then - The ThenSpec containing default target and optional routes
+ * @returns Map of target step name to array of OutputItems
+ *
+ * Example:
+ * ```typescript
+ * const groups = groupOutputsByTarget(
+ *   [
+ *     { entity_id: "abc", entity_class: "canonical" },
+ *     { entity_id: "xyz", entity_class: "mention" },
+ *   ],
+ *   { scatter: "describe", route: [{ where: { property: "entity_class", equals: "mention" }, target: "done" }] }
+ * );
+ * // Returns: Map { "describe" => [{ entity_id: "abc", ... }], "done" => [{ entity_id: "xyz", ... }] }
+ * ```
+ */
+export function groupOutputsByTarget(
+  outputs: Output[],
+  then: ThenSpec
+): Map<string, OutputItem[]> {
+  const groups = new Map<string, OutputItem[]>();
+
+  for (const output of outputs) {
+    const item = normalizeOutput(output);
+    const target = resolveTarget(then, item);
+
+    // target is null only for { done: true } ThenSpec, which shouldn't have routes
+    // but handle gracefully
+    const targetKey = target ?? 'done';
+
+    if (!groups.has(targetKey)) {
+      groups.set(targetKey, []);
+    }
+    groups.get(targetKey)!.push(item);
+  }
+
+  return groups;
 }

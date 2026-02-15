@@ -68,6 +68,13 @@ export interface RhizaContext {
    * Only exists within workflow context (no standalone batching)
    */
   batch?: BatchContext;
+
+  /**
+   * Total number of scatter outputs (for scatter without gather)
+   * Used for CAS concurrency when updating parent log with sent_to relationships.
+   * When batch context exists, batch.total is used instead.
+   */
+  scatter_total?: number;
 }
 
 /**

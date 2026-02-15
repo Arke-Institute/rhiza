@@ -20,6 +20,8 @@ export type {
   WhereEquals,
   WhereAnd,
   WhereOr,
+  OutputItem,
+  Output,
 } from './rhiza';
 
 // Request types

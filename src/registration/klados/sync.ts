@@ -106,6 +106,7 @@ export async function syncKlados(
   options: KladosSyncOptions
 ): Promise<SyncResult<KladosRegistrationState> | DryRunResult> {
   const {
+    collectionId,
     collectionLabel = 'Klados Workers',
     keyStore,
     dryRun = false,
@@ -167,10 +168,10 @@ export async function syncKlados(
 
   if (!state) {
     // Step 1: Ensure collection exists
-    const { id: collectionId } = await ensureCollection(client, collectionLabel);
+    const { id: resolvedCollectionId } = await ensureCollection(client, collectionLabel, collectionId);
 
     // Step 2: Create klados entity (status: development)
-    const { id: kladosId } = await createKladosEntity(client, config, collectionId);
+    const { id: kladosId } = await createKladosEntity(client, config, resolvedCollectionId);
 
     // Step 3-6: Verification flow
     if (keyStore && onDeploy && onWaitForHealth) {
@@ -195,7 +196,7 @@ export async function syncKlados(
         state: {
           schema_version: 1,
           klados_id: kladosId,
-          collection_id: collectionId,
+          collection_id: resolvedCollectionId,
           api_key_prefix: apiKey.prefix,
           endpoint: config.endpoint,
           endpoint_verified_at: verifyResult.verifiedAt,
@@ -213,7 +214,7 @@ export async function syncKlados(
         state: {
           schema_version: 1,
           klados_id: kladosId,
-          collection_id: collectionId,
+          collection_id: resolvedCollectionId,
           api_key_prefix: '',
           endpoint: config.endpoint,
           endpoint_verified_at: undefined,

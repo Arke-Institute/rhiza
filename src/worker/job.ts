@@ -17,6 +17,7 @@ import type {
   FlowStep,
   HandoffRecord,
   BatchContext,
+  Output,
 } from '../types';
 import type { RhizaRuntimeConfig } from '../types/config';
 import { KladosLogger } from '../logging/logger';
@@ -43,6 +44,15 @@ export interface KladosJobConfig {
    * - JWT token from Supabase auth
    */
   authToken?: string;
+
+  /**
+   * URL of the relationship updater service for fire-and-forget parent log updates.
+   * If provided, parent log updates will be queued asynchronously instead of
+   * blocking the worker (which can cause waitUntil timeouts with large scatters).
+   *
+   * Default: https://scatter-utility.arke.institute
+   */
+  relationshipUpdaterUrl?: string;
 }
 
 /**
@@ -52,8 +62,8 @@ export interface KladosJobResult {
   /** The handoff result (if in a workflow) */
   handoff?: InterpretResult;
 
-  /** Output entity IDs */
-  outputs: string[];
+  /** Output entity IDs or OutputItems */
+  outputs: Output[];
 }
 
 /**
@@ -174,11 +184,11 @@ export class KladosJob {
    * - Executing workflow handoffs
    * - Finalizing the log
    *
-   * @param fn - The processing function that returns output entity IDs
+   * @param fn - The processing function that returns output entity IDs or OutputItems
    * @returns The job result
    */
   async run(
-    fn: () => Promise<string[]>,
+    fn: () => Promise<Output[]>,
     options?: { outputProperties?: Record<string, unknown> }
   ): Promise<KladosJobResult> {
     // Start the job (write initial log)
@@ -223,10 +233,14 @@ export class KladosJob {
         target_collection: this.request.target_collection,
         from_logs: this.request.rhiza?.parent_logs,
         batch: this.request.rhiza?.batch,
+        scatter_total: this.request.rhiza?.scatter_total,
       },
     };
 
     // Write initial log entry
+    // Use relationship updater service for fire-and-forget parent log updates
+    const relationshipUpdaterUrl = this.config.relationshipUpdaterUrl ?? 'https://scatter-utility.arke.institute';
+
     const { fileId } = await writeKladosLog({
       client: this.client,
       jobCollectionId: this.request.job_collection,
@@ -234,6 +248,10 @@ export class KladosJob {
       messages: this.log.getMessages(),
       agentId: this.config.agentId,
       agentVersion: this.config.agentVersion,
+      relationshipUpdaterUrl,
+      authToken: this.config.authToken,
+      apiBase: this.request.api_base,
+      network: this.request.network,
     });
 
     this.logFileId = fileId;
@@ -250,11 +268,16 @@ export class KladosJob {
    *
    * For advanced use cases. Handles workflow handoff and log finalization.
    *
-   * @param outputs - Output entity IDs produced by this job
-   * @param outputProperties - Properties of the primary output (for routing)
+   * Outputs can be:
+   * - string[] - entity IDs (backward compatible)
+   * - OutputItem[] - objects with entity_id + routing properties (for per-item routing)
+   * - mixed array of strings and OutputItems
+   *
+   * @param outputs - Output entity IDs or OutputItems produced by this job
+   * @param outputProperties - Properties of the primary output (for aggregate routing, deprecated)
    */
   async complete(
-    outputs: string[],
+    outputs: Output[],
     outputProperties?: Record<string, unknown>
   ): Promise<KladosJobResult> {
     if (this.state !== 'started') {

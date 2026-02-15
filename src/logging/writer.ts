@@ -33,6 +33,31 @@ export interface WriteLogOptions {
   /** Agent info */
   agentId: string;
   agentVersion: string;
+
+  /**
+   * URL of the relationship updater service for fire-and-forget parent log updates.
+   * If provided, parent log updates will be queued to this service instead of
+   * being done inline (which can cause waitUntil timeouts with large scatters).
+   */
+  relationshipUpdaterUrl?: string;
+
+  /**
+   * Auth token for the relationship updater service.
+   * Required if relationshipUpdaterUrl is provided.
+   */
+  authToken?: string;
+
+  /**
+   * API base URL for the relationship updater service.
+   * Required if relationshipUpdaterUrl is provided.
+   */
+  apiBase?: string;
+
+  /**
+   * Network (test/main) for the relationship updater service.
+   * Required if relationshipUpdaterUrl is provided.
+   */
+  network?: 'test' | 'main';
 }
 
 /**
@@ -63,6 +88,10 @@ export async function writeKladosLog(
     messages,
     agentId,
     agentVersion,
+    relationshipUpdaterUrl,
+    authToken,
+    apiBase,
+    network,
   } = options;
 
   // Build the job log structure
@@ -176,50 +205,83 @@ export async function writeKladosLog(
   if (hasParentLogs) {
     const parentLogIds = entry.received.from_logs!;
     const batchContext = entry.received.batch;
+    const scatterTotal = entry.received.scatter_total;
 
-    // Determine concurrency based on context:
-    // - Scatter: many siblings update same parent → use batch.total
-    // - Gather/Pass: only this child updates each parent → use 1
-    const isScatterChild = batchContext && parentLogIds.length === 1;
-    const concurrencyPerParent = isScatterChild ? batchContext.total : 1;
+    // If relationship updater service is available, use fire-and-forget
+    // This avoids waitUntil timeouts with large scatters
+    if (relationshipUpdaterUrl && authToken && apiBase && network) {
+      // Fire-and-forget: queue updates to the relationship updater service
+      // Don't await - let it complete asynchronously
+      for (const parentLogId of parentLogIds) {
+        // Use fetch directly without await for true fire-and-forget
+        fetch(`${relationshipUpdaterUrl}/relationships/queue`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': authToken.startsWith('ak_') || authToken.startsWith('uk_')
+              ? `ApiKey ${authToken}`
+              : `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            parentLogId,
+            childLogId: logEntityId,
+            apiBase,
+            network,
+          }),
+        }).catch((err) => {
+          // Log but don't throw - fire and forget
+          console.error(`[writeKladosLog] Failed to queue parent log update: ${err}`);
+        });
+      }
+    } else {
+      // Fallback: inline CAS update (may timeout with large scatters)
+      // Determine concurrency based on context:
+      // - Scatter with gather: many siblings update same parent → use batch.total
+      // - Scatter without gather: use scatter_total if provided
+      // - Gather/Pass: only this child updates each parent → use 1
+      const isScatterChild = parentLogIds.length === 1 && (batchContext || scatterTotal);
+      const concurrencyPerParent = isScatterChild
+        ? (batchContext?.total ?? scatterTotal ?? 1)
+        : 1;
 
-    // Batch parallel updates for gather scenarios (many parents)
-    const PARENT_UPDATE_BATCH_SIZE = 100;
+      // Batch parallel updates for gather scenarios (many parents)
+      const PARENT_UPDATE_BATCH_SIZE = 100;
 
-    for (let i = 0; i < parentLogIds.length; i += PARENT_UPDATE_BATCH_SIZE) {
-      const parentBatch = parentLogIds.slice(i, i + PARENT_UPDATE_BATCH_SIZE);
+      for (let i = 0; i < parentLogIds.length; i += PARENT_UPDATE_BATCH_SIZE) {
+        const parentBatch = parentLogIds.slice(i, i + PARENT_UPDATE_BATCH_SIZE);
 
-      await Promise.all(
-        parentBatch.map((parentLogId) =>
-          withCasRetry(
-            {
-              getTip: async () => {
-                const { data, error } = await client.api.GET('/entities/{id}/tip', {
-                  params: { path: { id: parentLogId } },
-                });
-                if (error || !data) throw new Error(`Failed to get parent log tip: ${parentLogId}`);
-                return data.cid;
+        await Promise.all(
+          parentBatch.map((parentLogId) =>
+            withCasRetry(
+              {
+                getTip: async () => {
+                  const { data, error } = await client.api.GET('/entities/{id}/tip', {
+                    params: { path: { id: parentLogId } },
+                  });
+                  if (error || !data) throw new Error(`Failed to get parent log tip: ${parentLogId}`);
+                  return data.cid;
+                },
+                update: async (tip: string) => {
+                  return client.api.PUT('/entities/{id}', {
+                    params: { path: { id: parentLogId } },
+                    body: {
+                      expect_tip: tip,
+                      relationships_add: [
+                        {
+                          predicate: 'sent_to',
+                          peer: logEntityId,
+                          direction: 'outgoing',
+                        },
+                      ],
+                    },
+                  });
+                },
               },
-              update: async (tip: string) => {
-                return client.api.PUT('/entities/{id}', {
-                  params: { path: { id: parentLogId } },
-                  body: {
-                    expect_tip: tip,
-                    relationships_add: [
-                      {
-                        predicate: 'sent_to',
-                        peer: logEntityId,
-                        direction: 'outgoing',
-                      },
-                    ],
-                  },
-                });
-              },
-            },
-            { concurrency: concurrencyPerParent }
+              { concurrency: concurrencyPerParent }
+            )
           )
-        )
-      );
+        );
+      }
     }
   }
 

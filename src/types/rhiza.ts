@@ -118,3 +118,33 @@ export interface WhereOr {
   /** Any condition must match */
   or: WhereCondition[];
 }
+
+/**
+ * OutputItem - Output entity with routing properties
+ *
+ * When completing a job, outputs can include properties for per-item routing.
+ * The entity_id is required; additional properties are used for route matching.
+ *
+ * Example:
+ * ```typescript
+ * job.complete([
+ *   { entity_id: "ent_abc", entity_class: "canonical" },
+ *   { entity_id: "ent_xyz", entity_class: "mention" },
+ * ]);
+ * ```
+ */
+export interface OutputItem {
+  /** Entity ID of the output */
+  entity_id: string;
+  /** Additional properties for routing (matched against route rules) */
+  [key: string]: unknown;
+}
+
+/**
+ * Output - Output from a klados job
+ *
+ * Can be either:
+ * - A string (entity ID) - no routing properties, goes to default target
+ * - An OutputItem object - includes entity_id and routing properties
+ */
+export type Output = string | OutputItem;

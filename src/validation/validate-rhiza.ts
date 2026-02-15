@@ -382,6 +382,9 @@ function validateAllPathsTerminate(
 
 /**
  * Extract all possible target step names from a ThenSpec (including route alternatives)
+ *
+ * Note: "done" is a special route target that means the item is complete (no further handoff).
+ * It's excluded from traversal targets since it represents termination.
  */
 function extractAllTargets(then: ThenSpec): string[] {
   const targets: string[] = [];
@@ -394,7 +397,10 @@ function extractAllTargets(then: ThenSpec): string[] {
     if (typeof then.pass === 'string') targets.push(then.pass);
     if (then.route) {
       for (const rule of then.route) {
-        if (typeof rule.target === 'string') targets.push(rule.target);
+        // "done" is a special route target meaning item is complete
+        if (typeof rule.target === 'string' && rule.target !== 'done') {
+          targets.push(rule.target);
+        }
       }
     }
   }
@@ -403,7 +409,9 @@ function extractAllTargets(then: ThenSpec): string[] {
     if (typeof then.scatter === 'string') targets.push(then.scatter);
     if (then.route) {
       for (const rule of then.route) {
-        if (typeof rule.target === 'string') targets.push(rule.target);
+        if (typeof rule.target === 'string' && rule.target !== 'done') {
+          targets.push(rule.target);
+        }
       }
     }
   }
@@ -412,7 +420,9 @@ function extractAllTargets(then: ThenSpec): string[] {
     if (typeof then.gather === 'string') targets.push(then.gather);
     if (then.route) {
       for (const rule of then.route) {
-        if (typeof rule.target === 'string') targets.push(rule.target);
+        if (typeof rule.target === 'string' && rule.target !== 'done') {
+          targets.push(rule.target);
+        }
       }
     }
   }

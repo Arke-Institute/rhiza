@@ -98,7 +98,7 @@ export async function syncRhiza(
   state: RhizaRegistrationState | null,
   options: RhizaSyncOptions
 ): Promise<SyncResult<RhizaRegistrationState> | DryRunResult> {
-  const { collectionLabel = 'Rhiza Workflows', dryRun = false } = options;
+  const { collectionId, collectionLabel = 'Rhiza Workflows', dryRun = false } = options;
 
   const configHash = hashConfig(config);
 
@@ -148,10 +148,10 @@ export async function syncRhiza(
 
   if (!state) {
     // Step 1: Ensure collection exists
-    const { id: collectionId } = await ensureCollection(client, collectionLabel);
+    const { id: resolvedCollectionId } = await ensureCollection(client, collectionLabel, collectionId);
 
     // Step 2: Create rhiza entity
-    const { id: rhizaId } = await createRhizaEntity(client, config, collectionId);
+    const { id: rhizaId } = await createRhizaEntity(client, config, resolvedCollectionId);
 
     const now = new Date().toISOString();
     return {
@@ -159,7 +159,7 @@ export async function syncRhiza(
       state: {
         schema_version: 1,
         rhiza_id: rhizaId,
-        collection_id: collectionId,
+        collection_id: resolvedCollectionId,
         version: config.version,
         config_hash: configHash,
         registered_at: now,

@@ -34,7 +34,9 @@ export interface KladosConfig {
 export interface KladosSyncOptions {
   /** Which network to register on */
   network: Network;
-  /** Collection label (default: 'Klados Workers') */
+  /** Existing collection ID to use (if not provided, creates new collection) */
+  collectionId?: string;
+  /** Collection label for new collection (default: 'Klados Workers') */
   collectionLabel?: string;
 
   /**

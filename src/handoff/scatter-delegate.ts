@@ -8,17 +8,45 @@
 import type { InvokeOptions } from './invoke';
 
 /**
+ * Per-item dispatch output with its own target
+ */
+export interface DelegateOutputItem {
+  /** Entity ID to dispatch */
+  id: string;
+  /** Target klados or rhiza ID for this item */
+  target: string;
+  /** Target type for this item */
+  targetType?: 'klados' | 'rhiza';
+  /** Step name for rhiza path building (when routing to different steps) */
+  stepName?: string;
+}
+
+/**
+ * Output for delegation - either a simple entity ID or an item with per-item target
+ */
+export type DelegateOutput = string | DelegateOutputItem;
+
+/**
  * Options for delegating scatter to external service
+ *
+ * Supports two modes:
+ * 1. Single target: All outputs go to the same targetId
+ *    - targetId and targetType required
+ *    - outputs is string[] of entity IDs
+ *
+ * 2. Per-item targets: Each output specifies its own target
+ *    - targetId and targetType optional
+ *    - outputs is DelegateOutputItem[] with per-item targets
  */
 export interface DelegateScatterOptions {
-  /** Target klados or rhiza ID */
-  targetId: string;
+  /** Default target klados or rhiza ID (required for single-target, optional for per-item) */
+  targetId?: string;
 
-  /** Target type */
-  targetType: 'klados' | 'rhiza';
+  /** Default target type (required for single-target, optional for per-item) */
+  targetType?: 'klados' | 'rhiza';
 
-  /** Output entity IDs to dispatch */
-  outputs: string[];
+  /** Output entity IDs or items with per-item targets to dispatch */
+  outputs: DelegateOutput[];
 
   /** Invocation options (passed through to scatter-utility) */
   invokeOptions: InvokeOptions;

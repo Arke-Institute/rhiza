@@ -46,6 +46,12 @@ export interface InvokeOptions {
     id: string;
     path: string[];
   };
+
+  /**
+   * Total number of scatter outputs (for scatter without gather)
+   * Used for CAS concurrency when updating parent log with sent_to relationships.
+   */
+  scatterTotal?: number;
 }
 
 /**
@@ -163,6 +169,7 @@ export async function invokeKlados(
       path: options.rhiza.path,
       parent_logs: options.parentLogs,
       batch: options.batch,
+      scatter_total: options.scatterTotal,
     };
   }
 
