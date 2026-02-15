@@ -30,49 +30,61 @@ interface CollectionResponse {
   cid?: string;
   type?: string;
   properties?: Record<string, unknown>;
+  roles?: {
+    public?: string[];
+    viewer?: string[];
+    editor?: string[];
+    owner?: string[];
+  };
 }
 
 /**
- * Get or create a collection for registration entities.
+ * Ensure a collection exists for registration.
  *
- * If a collection with the given label exists for this user, returns its ID.
- * Otherwise creates a new collection.
+ * If collectionId is provided, verifies it exists.
+ * If not provided, creates a new collection.
  *
  * @param client - Arke client (authenticated with user key)
- * @param label - Collection label
+ * @param label - Collection label (used when creating)
+ * @param collectionId - Optional existing collection ID to use
  * @returns Collection ID and whether it was created
  */
 export async function ensureCollection(
   client: ArkeClient,
-  label: string
+  label: string,
+  collectionId?: string
 ): Promise<{ id: string; created: boolean }> {
-  // Try to find existing collection with this label
-  // Note: This searches user's collections, not all collections
-  // The SDK types don't include this endpoint, so we use type assertion
-  const { data: collections, error: listError } = await (client.api.GET as Function)(
-    '/collections',
-    {
-      params: {
-        query: {
-          label,
-          limit: 1,
-        },
-      },
+  // If collection ID provided, verify it exists and check permissions
+  if (collectionId) {
+    const { data, error } = await client.api.GET('/collections/{id}', {
+      params: { path: { id: collectionId } },
+    });
+
+    if (error || !data) {
+      throw new Error(
+        `Collection ${collectionId} not found: ${error?.error || 'Unknown error'}`
+      );
     }
-  ) as { data?: CollectionResponse[]; error?: { error?: string } };
 
-  if (listError) {
-    throw new Error(`Failed to list collections: ${listError.error || 'Unknown error'}`);
-  }
+    // Check if public role has invoke permission
+    const collection = data as CollectionResponse;
+    const publicRoles = collection.roles?.public;
+    const hasInvoke = Array.isArray(publicRoles) &&
+      (publicRoles.includes('*:invoke') || publicRoles.includes('klados:invoke'));
 
-  // If collection exists, return it
-  if (collections && collections.length > 0) {
-    return { id: collections[0].id, created: false };
+    if (!hasInvoke) {
+      console.warn(
+        `\n⚠️  Warning: Collection ${collectionId} does not have '*:invoke' in public role.\n` +
+        `   Workflow chaining may fail - other workers won't be able to invoke this klados.\n` +
+        `   Consider updating the collection roles to include: public: ['*:view', '*:invoke']\n`
+      );
+    }
+
+    return { id: collectionId, created: false };
   }
 
   // Create new collection
-  // The SDK types don't include this endpoint, so we use type assertion
-  const { data: created, error: createError } = await (client.api.POST as Function)(
+  const { data: created, error: createError } = await client.api.POST(
     '/collections',
     {
       body: {
@@ -81,11 +93,13 @@ export async function ensureCollection(
         roles: DEFAULT_COLLECTION_ROLES,
       },
     }
-  ) as { data?: CollectionResponse; error?: { error?: string } };
+  );
 
   if (createError || !created) {
-    throw new Error(`Failed to create collection: ${createError?.error || 'Unknown error'}`);
+    throw new Error(
+      `Failed to create collection: ${createError?.error || 'Unknown error'}`
+    );
   }
 
-  return { id: created.id, created: true };
+  return { id: (created as CollectionResponse).id, created: true };
 }
