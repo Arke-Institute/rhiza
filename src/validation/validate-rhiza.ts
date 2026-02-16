@@ -182,6 +182,23 @@ function validateThen(
     return;
   }
 
+  if ('recurse' in then) {
+    validateTarget(stepName, 'recurse', then.recurse, flow, errors);
+    if (then.max_depth !== undefined) {
+      if (typeof then.max_depth !== 'number' || then.max_depth < 1 || !Number.isInteger(then.max_depth)) {
+        errors.push({
+          code: 'INVALID_MAX_DEPTH',
+          message: `max_depth in '${stepName}' must be a positive integer`,
+          klados_id: stepName,
+        });
+      }
+    }
+    if (then.route) {
+      validateRouteRules(stepName, then.route, flow, errors, warnings);
+    }
+    return;
+  }
+
   errors.push({
     code: 'INVALID_HANDOFF',
     message: `Unknown handoff type in '${stepName}': ${JSON.stringify(then)}`,
@@ -355,7 +372,14 @@ function validateAllPathsTerminate(
       return;
     }
 
+    if ('recurse' in then) {
+      // Recurse is a valid termination - it's a bounded loop (max_depth)
+      // We don't follow recurse edges for cycle detection
+      return;
+    }
+
     // Get all possible targets (including route alternatives)
+    // Note: recurse targets are NOT included (handled above)
     const targets = extractAllTargets(then);
 
     if (targets.length === 0) {
@@ -385,8 +409,13 @@ function validateAllPathsTerminate(
  *
  * Note: "done" is a special route target that means the item is complete (no further handoff).
  * It's excluded from traversal targets since it represents termination.
+ *
+ * @param then - The ThenSpec to extract targets from
+ * @param includeRecurse - Whether to include recurse targets (default: false)
+ *   For cycle detection: false (recurse is bounded by max_depth, not a real cycle)
+ *   For reachability: true (recurse targets are reachable steps)
  */
-function extractAllTargets(then: ThenSpec): string[] {
+function extractAllTargets(then: ThenSpec, includeRecurse = false): string[] {
   const targets: string[] = [];
 
   if ('done' in then) {
@@ -427,6 +456,19 @@ function extractAllTargets(then: ThenSpec): string[] {
     }
   }
 
+  if ('recurse' in then && includeRecurse) {
+    // Only include recurse targets when explicitly requested (for reachability analysis)
+    // For cycle detection, recurse is NOT included because it's bounded by max_depth
+    if (typeof then.recurse === 'string') targets.push(then.recurse);
+    if (then.route) {
+      for (const rule of then.route) {
+        if (typeof rule.target === 'string' && rule.target !== 'done') {
+          targets.push(rule.target);
+        }
+      }
+    }
+  }
+
   return targets;
 }
 
@@ -448,7 +490,8 @@ function findReachableSteps(
     const step = flow[current];
     if (!step || !step.then) continue;
 
-    const targets = extractAllTargets(step.then);
+    // Include recurse targets for reachability analysis
+    const targets = extractAllTargets(step.then, true);
     for (const target of targets) {
       if (!reachable.has(target) && flow[target]) {
         queue.push(target);

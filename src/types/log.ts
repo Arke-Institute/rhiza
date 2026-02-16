@@ -84,12 +84,12 @@ export interface KladosLogEntry {
 /**
  * HandoffRecord - Record of a handoff operation
  *
- * Three core types: pass, scatter, gather
+ * Four core types: pass, scatter, gather, recurse
  * Target can be klados or rhiza (discovered at invocation time)
  */
 export interface HandoffRecord {
   /** Handoff type (core operations only) */
-  type: 'pass' | 'scatter' | 'gather';
+  type: 'pass' | 'scatter' | 'gather' | 'recurse';
 
   /** Target ID (klados or rhiza) */
   target: string;
@@ -118,6 +118,9 @@ export interface HandoffRecord {
 
   /** Number of slots routed to "done" (skipped invocation) */
   done_slots?: number;
+
+  /** Current recursion depth when handoff was made (for recurse type) */
+  depth?: number;
 }
 
 /**

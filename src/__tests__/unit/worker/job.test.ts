@@ -141,6 +141,68 @@ describe('KladosJob', () => {
     });
   });
 
+  describe('recurseDepth', () => {
+    it('returns 0 when no rhiza context', () => {
+      const request = createTestRequest();
+      const job = KladosJob.accept(request, testConfig);
+
+      expect(job.recurseDepth).toBe(0);
+    });
+
+    it('returns 0 when rhiza context has no recurse_depth', () => {
+      const request = createTestRequest({
+        rhiza: {
+          id: 'rhiza_test',
+          path: ['klados_a'],
+          parent_logs: ['log_parent'],
+        },
+      });
+      const job = KladosJob.accept(request, testConfig);
+
+      expect(job.recurseDepth).toBe(0);
+    });
+
+    it('returns the recurse_depth when present', () => {
+      const request = createTestRequest({
+        rhiza: {
+          id: 'rhiza_test',
+          path: ['klados_a'],
+          parent_logs: ['log_parent'],
+          recurse_depth: 3,
+        },
+      });
+      const job = KladosJob.accept(request, testConfig);
+
+      expect(job.recurseDepth).toBe(3);
+    });
+
+    it('returns correct depth at various levels', () => {
+      // Simulate depth 0
+      const job0 = KladosJob.accept(createTestRequest({
+        rhiza: { id: 'r', path: ['a'], parent_logs: [], recurse_depth: 0 },
+      }), testConfig);
+      expect(job0.recurseDepth).toBe(0);
+
+      // Simulate depth 1
+      const job1 = KladosJob.accept(createTestRequest({
+        rhiza: { id: 'r', path: ['a'], parent_logs: [], recurse_depth: 1 },
+      }), testConfig);
+      expect(job1.recurseDepth).toBe(1);
+
+      // Simulate depth 10
+      const job10 = KladosJob.accept(createTestRequest({
+        rhiza: { id: 'r', path: ['a'], parent_logs: [], recurse_depth: 10 },
+      }), testConfig);
+      expect(job10.recurseDepth).toBe(10);
+
+      // Simulate depth 100 (max_depth edge case)
+      const job100 = KladosJob.accept(createTestRequest({
+        rhiza: { id: 'r', path: ['a'], parent_logs: [], recurse_depth: 100 },
+      }), testConfig);
+      expect(job100.recurseDepth).toBe(100);
+    });
+  });
+
   describe('logger integration', () => {
     it('can log messages', () => {
       const request = createTestRequest();

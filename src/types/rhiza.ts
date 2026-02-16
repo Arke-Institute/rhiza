@@ -65,7 +65,7 @@ export interface FlowStep {
 /**
  * ThenSpec - Handoff specification
  *
- * Three core operations: pass, scatter, gather (+ done for terminal)
+ * Four core operations: pass, scatter, gather, recurse (+ done for terminal)
  * - Target is a step name (string) referring to another step in the flow
  * - Route conditions can override the default target based on output properties
  */
@@ -73,7 +73,8 @@ export type ThenSpec =
   | { done: true }                              // Terminal - workflow ends
   | { pass: string; route?: RouteRule[] }       // 1:1 - target step name
   | { scatter: string; route?: RouteRule[] }    // 1:N fan-out - target step name
-  | { gather: string; route?: RouteRule[] };    // N:1 fan-in - target step name
+  | { gather: string; route?: RouteRule[] }     // N:1 fan-in - target step name
+  | { recurse: string; max_depth?: number; route?: RouteRule[] };  // Loop back - target step name (with depth limit)
 
 /**
  * RouteRule - Conditional routing rule

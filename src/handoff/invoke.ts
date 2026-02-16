@@ -52,6 +52,12 @@ export interface InvokeOptions {
    * Used for CAS concurrency when updating parent log with sent_to relationships.
    */
   scatterTotal?: number;
+
+  /**
+   * Current recursion depth (for recurse handoffs)
+   * Passed through to invoked klados so they know the current depth.
+   */
+  recurseDepth?: number;
 }
 
 /**
@@ -170,6 +176,7 @@ export async function invokeKlados(
       parent_logs: options.parentLogs,
       batch: options.batch,
       scatter_total: options.scatterTotal,
+      recurse_depth: options.recurseDepth,
     };
   }
 

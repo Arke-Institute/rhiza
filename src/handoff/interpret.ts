@@ -35,7 +35,8 @@ export type HandoffAction =
   | 'pass'
   | 'scatter'
   | 'gather_wait'
-  | 'gather_trigger';
+  | 'gather_trigger'
+  | 'recurse';
 
 /**
  * Context for interpreting a handoff
@@ -91,6 +92,9 @@ export interface InterpretContext {
 
   /** Auth token for scatter-utility delegation (optional - needed for automatic delegation) */
   authToken?: string;
+
+  /** Current recursion depth (for recurse handoffs) */
+  recurseDepth?: number;
 }
 
 /**
@@ -164,6 +168,13 @@ export async function interpretThen(
   // ═══════════════════════════════════════════════════════════════
   if ('gather' in then) {
     return handleGather(then, context);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Recurse: bounded loop back to earlier step
+  // ═══════════════════════════════════════════════════════════════
+  if ('recurse' in then) {
+    return handleRecurse(then, context);
   }
 
   throw new Error(`Unknown ThenSpec type: ${JSON.stringify(then)}`);
@@ -888,6 +899,102 @@ async function handleGather(
 }
 
 /**
+ * Handle a recurse handoff (bounded loop back to earlier step)
+ *
+ * Recurse is like pass, but:
+ * 1. Increments recurse_depth in context
+ * 2. Checks max_depth before invoking
+ * 3. Terminates when no outputs (base case)
+ */
+async function handleRecurse(
+  then: { recurse: string; max_depth?: number; route?: import('../types').RouteRule[] },
+  context: InterpretContext
+): Promise<InterpretResult> {
+  const { client, flow, outputs } = context;
+  const maxDepth = then.max_depth ?? 100;
+  const currentDepth = context.recurseDepth ?? 0;
+
+  // Check max depth BEFORE processing outputs
+  if (currentDepth >= maxDepth) {
+    console.warn(`Recurse max_depth (${maxDepth}) reached, terminating recursion`);
+    return { action: 'done' };
+  }
+
+  // Group outputs by their resolved target (per-item routing)
+  const groups = groupOutputsByTarget(outputs, then);
+
+  // Track all invocations across groups
+  const allInvocations: InvocationRecord[] = [];
+  let primaryTarget: string | undefined;
+  let primaryTargetType: 'klados' | 'rhiza' | undefined;
+
+  for (const [targetStepName, items] of groups) {
+    // Skip items routed to "done" - they're complete
+    if (targetStepName === 'done') {
+      continue;
+    }
+
+    // Look up the klados for the target step
+    const targetStep = flow[targetStepName];
+    if (!targetStep) {
+      throw new Error(`Target step '${targetStepName}' not found in flow`);
+    }
+    const targetKladosRef = targetStep.klados;
+
+    // Discover target type (klados or rhiza)
+    const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.pi);
+
+    // Track primary target (first non-done group)
+    if (!primaryTarget) {
+      primaryTarget = targetKladosRef.pi;
+      primaryTargetType = targetType;
+    }
+
+    // Build invoke options with updated path and INCREMENTED depth
+    const invokeOptions = buildInvokeOptions(context, targetStepName);
+    invokeOptions.recurseDepth = currentDepth + 1;
+
+    // Extract entity IDs from items
+    const entityIds = items.map(item => item.entity_id);
+
+    // Invoke the target klados with this group's outputs
+    const result = await invokeTarget(
+      client,
+      targetKladosRef.pi,
+      targetType,
+      entityIds,
+      invokeOptions
+    );
+
+    // Check if invoke was accepted
+    if (!result.accepted) {
+      throw new Error(`Recurse invoke failed: ${result.error || 'Unknown error'}`);
+    }
+
+    allInvocations.push(result.invocation);
+  }
+
+  // If all items went to "done" or no outputs, this is effectively terminal
+  if (!primaryTarget) {
+    return { action: 'done' };
+  }
+
+  return {
+    action: 'recurse',
+    target: primaryTarget,
+    targetType: primaryTargetType,
+    invocations: allInvocations,
+    handoffRecord: {
+      type: 'recurse',
+      target: primaryTarget,
+      target_type: primaryTargetType!,
+      depth: currentDepth,
+      invocations: allInvocations,
+    },
+  };
+}
+
+/**
  * Extract entity IDs from outputs array
  */
 function extractEntityIds(outputs: Output[]): string[] {
@@ -914,6 +1021,7 @@ function buildInvokeOptions(context: InterpretContext, targetStepName?: string):
     network: context.network,
     parentLogs: [context.fromLogId],
     batch: context.batchContext,
+    recurseDepth: context.recurseDepth,  // Forward recurse depth unchanged
     rhiza: {
       id: context.rhizaId,
       path: newPath,

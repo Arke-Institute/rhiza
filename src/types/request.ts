@@ -75,6 +75,14 @@ export interface RhizaContext {
    * When batch context exists, batch.total is used instead.
    */
   scatter_total?: number;
+
+  /**
+   * Current recursion depth (for recurse handoffs)
+   * Incremented each time a recurse handoff is executed.
+   * Used to enforce max_depth limits on recursive workflows.
+   * Default: 0
+   */
+  recurse_depth?: number;
 }
 
 /**

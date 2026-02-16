@@ -176,6 +176,14 @@ export class KladosJob {
   }
 
   /**
+   * Get the current recursion depth (for recurse handoffs)
+   * Returns 0 if not in a recursive workflow.
+   */
+  get recurseDepth(): number {
+    return this.request.rhiza?.recurse_depth ?? 0;
+  }
+
+  /**
    * Run the job with automatic lifecycle management
    *
    * This is the recommended way to process a klados job. It handles:
@@ -319,6 +327,7 @@ export class KladosJob {
             network: this.request.network,
             batchContext: this.request.rhiza.batch,
             authToken: this.config.authToken,
+            recurseDepth: this.request.rhiza.recurse_depth,
           },
           this.rhizaConfig
         );

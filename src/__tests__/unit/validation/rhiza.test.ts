@@ -281,6 +281,60 @@ describe('validateRhizaProperties', () => {
       const cycleError = result.errors.find((e) => e.code === 'CYCLE_DETECTED');
       expect(cycleError?.message).toContain('->');
     });
+
+    it('does NOT flag recurse as a cycle (recurse is allowed)', () => {
+      const result = validateRhizaProperties({
+        label: 'Recurse Loop',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'step_a' } },
+        },
+        status: 'active',
+      });
+
+      // Recurse should NOT be flagged as a cycle
+      expect(result.valid).toBe(true);
+      expect(result.errors.filter(e => e.code === 'CYCLE_DETECTED')).toHaveLength(0);
+    });
+
+    it('does NOT flag recurse self-reference as a cycle', () => {
+      const result = validateRhizaProperties({
+        label: 'Self Recurse',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { recurse: 'step_a' } },
+        },
+        status: 'active',
+      });
+
+      // Recurse to self should be valid (bounded by max_depth)
+      expect(result.valid).toBe(true);
+      expect(result.errors.filter(e => e.code === 'CYCLE_DETECTED')).toHaveLength(0);
+    });
+
+    it('still flags regular pass cycles even when recurse is present elsewhere', () => {
+      const result = validateRhizaProperties({
+        label: 'Mixed Cycles',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { pass: 'step_c' } },
+          'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { pass: 'step_a' } },  // Regular cycle - should fail
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.objectContaining({
+          code: 'CYCLE_DETECTED',
+        })
+      );
+    });
   });
 
   // =========================================================================
@@ -397,6 +451,140 @@ describe('validateRhizaProperties', () => {
         flow: {
           'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { gather: 'step_b' } },
           'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts recurse handoff', () => {
+      const result = validateRhizaProperties({
+        label: 'Recurse Test',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'step_a' } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts recurse handoff with max_depth', () => {
+      const result = validateRhizaProperties({
+        label: 'Recurse with Depth',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'step_a', max_depth: 20 } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('fails when recurse max_depth is negative', () => {
+      const result = validateRhizaProperties({
+        label: 'Invalid Max Depth',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'step_a', max_depth: -1 } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.objectContaining({
+          code: 'INVALID_MAX_DEPTH',
+        })
+      );
+    });
+
+    it('fails when recurse max_depth is zero', () => {
+      const result = validateRhizaProperties({
+        label: 'Zero Max Depth',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'step_a', max_depth: 0 } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.objectContaining({
+          code: 'INVALID_MAX_DEPTH',
+        })
+      );
+    });
+
+    it('fails when recurse max_depth is not an integer', () => {
+      const result = validateRhizaProperties({
+        label: 'Float Max Depth',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'step_a', max_depth: 10.5 } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.objectContaining({
+          code: 'INVALID_MAX_DEPTH',
+        })
+      );
+    });
+
+    it('fails when recurse target does not exist', () => {
+      const result = validateRhizaProperties({
+        label: 'Invalid Recurse Target',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'nonexistent' } },
+        },
+        status: 'active',
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.objectContaining({
+          code: 'INVALID_TARGET',
+        })
+      );
+    });
+
+    it('accepts recurse with route rules', () => {
+      const result = validateRhizaProperties({
+        label: 'Recurse with Routes',
+        version: '1.0.0',
+        entry: 'step_a',
+        flow: {
+          'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+          'step_b': {
+            klados: ref('II01klados_b', { type: 'klados' }),
+            then: {
+              recurse: 'step_a',
+              max_depth: 10,
+              route: [
+                { where: { property: 'should_terminate', equals: true }, target: 'done' },
+              ],
+            },
+          },
         },
         status: 'active',
       });

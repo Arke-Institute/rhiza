@@ -37,6 +37,9 @@ export function resolveTarget(
   } else if ('gather' in then) {
     defaultTarget = then.gather;
     route = then.route;
+  } else if ('recurse' in then) {
+    defaultTarget = then.recurse;
+    route = then.route;
   } else {
     // Should not happen with well-typed ThenSpec
     return null;
