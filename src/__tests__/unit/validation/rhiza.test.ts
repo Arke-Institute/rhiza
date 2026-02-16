@@ -21,8 +21,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { validateRhizaProperties } from '../../../validation';
+import { validateRhizaProperties, validateRhizaUpdate } from '../../../validation';
 import { ref } from '../../../types';
+import type { RhizaProperties } from '../../../types';
 import type { RouteRule } from '../../../types';
 import {
   linearRhizaProperties,
@@ -960,5 +961,140 @@ describe('validateRhizaProperties', () => {
 
       expect(result.valid).toBe(true);
     });
+  });
+});
+
+// =========================================================================
+// validateRhizaUpdate Tests
+// =========================================================================
+
+describe('validateRhizaUpdate', () => {
+  const existingProperties: RhizaProperties = {
+    label: 'Original Workflow',
+    version: '1.0.0',
+    entry: 'step_a',
+    flow: {
+      'step_a': { klados: ref('II01klados_a', { type: 'klados' }), then: { pass: 'step_b' } },
+      'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { done: true } },
+    },
+    status: 'active',
+  };
+
+  it('skips validation when updating label only (no structural changes)', () => {
+    const update = { label: 'Updated Workflow' };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    // When neither entry nor flow is being updated, validation is skipped
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('skips validation when updating version only (no structural changes)', () => {
+    const update = { version: '2.0.0' };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    // When neither entry nor flow is being updated, validation is skipped
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('skips validation when update is empty', () => {
+    const update = {};
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    // When neither entry nor flow is being updated, validation is skipped
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('validates merged properties when changing entry', () => {
+    const update = { entry: 'step_b' };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('fails when changing entry to non-existent step', () => {
+    const update = { entry: 'nonexistent' };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        code: 'ENTRY_NOT_IN_FLOW',
+      })
+    );
+  });
+
+  it('merges flow at step level when updating flow', () => {
+    // Add a new step to the existing flow
+    const update = {
+      flow: {
+        'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true as const } },
+      },
+    };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    // Should be valid - the new step is added but also existing steps remain
+    expect(result.valid).toBe(true);
+  });
+
+  it('can update an existing step in flow', () => {
+    // Change step_b to point somewhere else
+    const update = {
+      flow: {
+        'step_b': { klados: ref('II01klados_b_updated', { type: 'klados' }), then: { pass: 'step_c' } },
+        'step_c': { klados: ref('II01klados_c', { type: 'klados' }), then: { done: true as const } },
+      },
+    };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('fails when update introduces invalid target', () => {
+    const update = {
+      flow: {
+        'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { pass: 'nonexistent' } },
+      },
+    };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        code: 'INVALID_TARGET',
+      })
+    );
+  });
+
+  it('fails when update introduces a cycle', () => {
+    const update = {
+      flow: {
+        'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { pass: 'step_a' } },
+      },
+    };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({
+        code: 'CYCLE_DETECTED',
+      })
+    );
+  });
+
+  it('succeeds when update introduces recurse (not a cycle)', () => {
+    const update = {
+      flow: {
+        'step_b': { klados: ref('II01klados_b', { type: 'klados' }), then: { recurse: 'step_a', max_depth: 10 } },
+      },
+    };
+    const result = validateRhizaUpdate(update, existingProperties);
+
+    expect(result.valid).toBe(true);
   });
 });

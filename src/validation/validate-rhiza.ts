@@ -502,6 +502,43 @@ function findReachableSteps(
   return reachable;
 }
 
+/**
+ * Validate a partial rhiza update
+ *
+ * Merges the update with existing properties and validates the result.
+ * This is used when updating an existing rhiza entity with partial changes.
+ *
+ * Only fields explicitly provided in the update (not undefined) are merged.
+ * If neither entry nor flow is being updated, validation is skipped.
+ *
+ * @param update - The partial update to apply
+ * @param existing - The existing rhiza properties
+ * @returns Validation result for the merged properties
+ */
+export function validateRhizaUpdate(
+  update: Partial<RhizaProperties>,
+  existing: RhizaProperties
+): ValidationResult {
+  // If neither entry nor flow is being updated, skip structural validation
+  if (update.entry === undefined && update.flow === undefined) {
+    return { valid: true, errors: [], warnings: [] };
+  }
+
+  // Merge update with existing, using existing values as fallback
+  const merged: Partial<RhizaProperties> = {
+    ...existing,
+    entry: update.entry ?? existing.entry,
+    flow: update.flow ?? existing.flow,
+  };
+
+  // If flow is being updated, merge at flow level
+  if (update.flow && existing.flow) {
+    merged.flow = { ...existing.flow, ...update.flow };
+  }
+
+  return validateRhizaProperties(merged);
+}
+
 // Extend ValidationWarning to include klados_id
 declare module './validate-klados' {
   interface ValidationWarning {

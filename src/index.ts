@@ -97,7 +97,7 @@ export {
   type ValidationWarning,
 } from './validation/validate-klados';
 
-export { validateRhizaProperties } from './validation/validate-rhiza';
+export { validateRhizaProperties, validateRhizaUpdate } from './validation/validate-rhiza';
 
 // ============================================================================
 // Handoff - Pure functions for route matching, target resolution, gather

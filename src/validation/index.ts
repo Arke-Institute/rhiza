@@ -14,4 +14,5 @@ export {
 
 export {
   validateRhizaProperties,
+  validateRhizaUpdate,
 } from './validate-rhiza';
