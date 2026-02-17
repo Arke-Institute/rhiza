@@ -95,6 +95,9 @@ export interface InterpretContext {
 
   /** Current recursion depth (for recurse handoffs) */
   recurseDepth?: number;
+
+  /** Input data from workflow invocation (forwarded to child kladoi/sub-rhizas) */
+  input?: Record<string, unknown>;
 }
 
 /**
@@ -1023,6 +1026,12 @@ function buildInvokeOptions(context: InterpretContext, targetStepName?: string):
   const targetStep = targetStepName ? context.flow[targetStepName] : undefined;
   const stepInput = targetStep?.input;
 
+  // Merge inputs: workflow input as base, step-specific input overrides
+  // This allows workflow-level config to flow through, with per-step overrides
+  const mergedInput = context.input || stepInput
+    ? { ...context.input, ...stepInput }
+    : undefined;
+
   return {
     targetCollection: context.targetCollection,
     jobCollectionId: context.jobCollectionId,
@@ -1032,7 +1041,7 @@ function buildInvokeOptions(context: InterpretContext, targetStepName?: string):
     parentLogs: [context.fromLogId],
     batch: context.batchContext,
     recurseDepth: context.recurseDepth,  // Forward recurse depth unchanged
-    input: stepInput,  // Pass step-specific input to the target klados
+    input: mergedInput,  // Workflow input + step-specific overrides
     rhiza: {
       id: context.rhizaId,
       path: newPath,

@@ -240,13 +240,18 @@ export async function invokeKlados(
 }
 
 /**
- * Invoke a sub-rhiza via POST /rhizai/:id/invoke
+ * Invoke a sub-rhiza by resolving its entry klados and invoking directly
+ *
+ * This unifies sub-rhiza invocation with regular klados-to-klados handoffs:
+ * - Fetches the rhiza entity to find the entry klados
+ * - Invokes the entry klados directly via invokeKlados()
+ * - Preserves full context (job_collection, parent_logs, input, etc.)
  *
  * Fire-and-forget: the sub-rhiza creates log entries pointing back to parent.
- * Parent does not track children.
  *
- * Note: The current API doesn't support passing parent_logs directly.
- * Sub-rhiza invocations with parent tracking would need API extension.
+ * Note: This is different from the Arke API's /rhizai/{id}/invoke endpoint,
+ * which is used for external/direct rhiza invocation. This function is for
+ * workflow handoffs where we need to preserve context.
  */
 export async function invokeRhiza(
   client: ArkeClient,
@@ -255,73 +260,90 @@ export async function invokeRhiza(
   options: InvokeOptions
 ): Promise<InvokeResult> {
   const jobId = `job_${generateId()}`;
-  const isMany = Array.isArray(entityTarget);
-  const expiresIn = options.expiresIn ?? 3600;
-
-  // Build a minimal request for logging
-  const request: KladosRequest = {
-    job_id: jobId,
-    target_entity: isMany ? undefined : entityTarget,
-    target_entities: isMany ? entityTarget : undefined,
-    target_collection: options.targetCollection,
-    job_collection: options.jobCollectionId,
-    api_base: options.apiBase,
-    expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(),
-    network: options.network,
-  };
-
-  const invocation: InvocationRecord = {
-    request,
-    batch_index: options.batch?.index,
-  };
 
   try {
-    // Map to API format (will be updated when API supports new format)
-    const apiTarget = request.target_entity ?? request.target_entities?.[0] ?? '';
-
-    // Invoke via POST /rhizai/:id/invoke
-    // TODO: Update body schema when API supports new target fields
-    const { data, error } = await client.api.POST('/rhizai/{id}/invoke', {
+    // Fetch rhiza entity to get entry point and flow
+    const { data: rhiza, error: fetchError } = await client.api.GET('/entities/{id}', {
       params: { path: { id: rhizaId } },
-      body: {
-        target: apiTarget,
-        target_collection: request.target_collection,
-        input: options.input,
-        expires_in: expiresIn,
-        confirm: true,
-      },
     });
 
-    if (error) {
+    if (fetchError || !rhiza) {
+      // Build minimal invocation record for error case
+      const errorRequest: KladosRequest = {
+        job_id: jobId,
+        target_entity: Array.isArray(entityTarget) ? undefined : entityTarget,
+        target_entities: Array.isArray(entityTarget) ? entityTarget : undefined,
+        target_collection: options.targetCollection,
+        job_collection: options.jobCollectionId,
+        api_base: options.apiBase,
+        expires_at: new Date(Date.now() + (options.expiresIn ?? 3600) * 1000).toISOString(),
+        network: options.network,
+      };
+
       return {
         jobId,
         accepted: false,
-        error: error.error || 'Unknown error',
-        invocation,
+        error: `Failed to fetch rhiza: ${rhizaId}`,
+        invocation: { request: errorRequest },
       };
     }
 
-    // Check if it's a started response
-    if (data && 'status' in data && data.status === 'started' && 'job_id' in data) {
+    // Extract entry point from rhiza properties
+    const entryStepName = rhiza.properties.entry as string;
+    const flow = rhiza.properties.flow as Record<string, { klados: { id: string } }>;
+
+    if (!entryStepName || !flow || !flow[entryStepName]) {
       return {
-        jobId: data.job_id,
-        accepted: true,
-        invocation,
+        jobId,
+        accepted: false,
+        error: `Invalid rhiza: missing entry point or flow definition`,
+        invocation: {
+          request: {
+            job_id: jobId,
+            target_collection: options.targetCollection,
+            job_collection: options.jobCollectionId,
+            api_base: options.apiBase,
+            expires_at: new Date().toISOString(),
+            network: options.network,
+          },
+        },
       };
     }
 
-    return {
-      jobId,
-      accepted: false,
-      error: 'Unexpected response from invoke',
-      invocation,
+    const entryKladosId = flow[entryStepName].klados.id;
+
+    // Build options for the sub-rhiza's entry klados
+    // Key: we create a NEW rhiza context for the sub-workflow,
+    // but preserve parent linkage via parentLogs
+    const subRhizaOptions: InvokeOptions = {
+      ...options,
+      rhiza: {
+        id: rhizaId,
+        path: [entryStepName],  // Fresh path within sub-rhiza
+      },
+      // parentLogs, recurseDepth, input all flow through from options
     };
+
+    // Invoke entry klados directly - this preserves all context
+    return invokeKlados(client, entryKladosId, entityTarget, subRhizaOptions);
   } catch (e) {
+    // Build minimal invocation record for error case
+    const errorRequest: KladosRequest = {
+      job_id: jobId,
+      target_entity: Array.isArray(entityTarget) ? undefined : entityTarget,
+      target_entities: Array.isArray(entityTarget) ? entityTarget : undefined,
+      target_collection: options.targetCollection,
+      job_collection: options.jobCollectionId,
+      api_base: options.apiBase,
+      expires_at: new Date(Date.now() + (options.expiresIn ?? 3600) * 1000).toISOString(),
+      network: options.network,
+    };
+
     return {
       jobId,
       accepted: false,
       error: e instanceof Error ? e.message : 'Unknown error',
-      invocation,
+      invocation: { request: errorRequest },
     };
   }
 }

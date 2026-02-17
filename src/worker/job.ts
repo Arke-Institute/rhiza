@@ -328,6 +328,7 @@ export class KladosJob {
             batchContext: this.request.rhiza.batch,
             authToken: this.config.authToken,
             recurseDepth: this.request.rhiza.recurse_depth,
+            input: this.request.input,  // Forward workflow input to handoffs
           },
           this.rhizaConfig
         );
