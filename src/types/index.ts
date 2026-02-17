@@ -1,6 +1,6 @@
 // Entity reference types
-export type { EntityRef } from './refs';
-export { isEntityRef, ref } from './refs';
+export type { EntityRef, LegacyEntityRef, AnyEntityRef } from './refs';
+export { isEntityRef, getRefId, ref } from './refs';
 
 // Klados entity types
 export type {

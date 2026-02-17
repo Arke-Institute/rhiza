@@ -44,8 +44,8 @@ export type {
 } from './types/rhiza';
 
 // Entity reference types
-export type { EntityRef } from './types/refs';
-export { isEntityRef, ref } from './types/refs';
+export type { EntityRef, LegacyEntityRef, AnyEntityRef } from './types/refs';
+export { isEntityRef, getRefId, ref } from './types/refs';
 
 // Request types
 export type {

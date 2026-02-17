@@ -42,6 +42,21 @@ export interface EntityRef {
   description?: string;
 }
 
+/**
+ * Legacy EntityRef using `pi` field.
+ * @deprecated Use EntityRef with `id` field instead.
+ */
+export interface LegacyEntityRef {
+  /** @deprecated Use `id` instead */
+  pi: string;
+  type?: 'klados' | 'rhiza';
+  label?: string;
+  description?: string;
+}
+
+/** EntityRef that accepts either `id` (preferred) or `pi` (legacy) */
+export type AnyEntityRef = EntityRef | LegacyEntityRef;
+
 // =============================================================================
 // Type Guard
 // =============================================================================
@@ -49,15 +64,32 @@ export interface EntityRef {
 /**
  * Check if a value is an EntityRef
  *
- * Uses duck typing: any object with an `id` string field is considered a ref.
+ * Uses duck typing: any object with an `id` or `pi` string field is considered a ref.
+ * Accepts both `id` (preferred) and `pi` (legacy) for backwards compatibility.
  */
-export function isEntityRef(value: unknown): value is EntityRef {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'id' in value &&
-    typeof (value as EntityRef).id === 'string'
-  );
+export function isEntityRef(value: unknown): value is AnyEntityRef {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  const hasId = 'id' in obj && typeof obj.id === 'string';
+  const hasPi = 'pi' in obj && typeof obj.pi === 'string';
+  return hasId || hasPi;
+}
+
+/**
+ * Get the entity ID from an EntityRef
+ *
+ * Handles both `id` and `pi` field names, preferring `id` if both are present.
+ *
+ * @param ref - The EntityRef to extract ID from
+ * @returns The entity ID string
+ * @throws Error if neither `id` nor `pi` is present
+ */
+export function getRefId(ref: AnyEntityRef): string {
+  if ('id' in ref) return ref.id;
+  if ('pi' in ref) return ref.pi;
+  throw new Error('EntityRef must have either id or pi field');
 }
 
 // =============================================================================
@@ -67,17 +99,17 @@ export function isEntityRef(value: unknown): value is EntityRef {
 /**
  * Create an EntityRef with optional metadata
  *
- * @param pi - The entity ID
+ * @param entityId - The entity ID (persistent identifier)
  * @param options - Optional type, label, description
- * @returns An EntityRef object
+ * @returns An EntityRef object with `id` field
  *
  * @example
  * ref('klados_worker', { type: 'klados' })
  * ref('rhiza_subprocess', { type: 'rhiza', label: 'OCR Pipeline' })
  */
 export function ref(
-  pi: string,
+  entityId: string,
   options?: { type?: 'klados' | 'rhiza'; label?: string; description?: string }
 ): EntityRef {
-  return { id: pi, ...options };
+  return { id: entityId, ...options };
 }
