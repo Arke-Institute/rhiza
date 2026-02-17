@@ -58,6 +58,9 @@ export interface FlowStep {
   /** Which klados to invoke for this step */
   klados: EntityRef;
 
+  /** Optional input data to pass to the klados for this step */
+  input?: Record<string, unknown>;
+
   /** Handoff specification - what happens after this step completes */
   then: ThenSpec;
 }

@@ -325,6 +325,7 @@ async function handleScatter(
   if (shouldDelegate) {
     // Build invoke options for delegation
     const newPath = [...path, targetStepName];
+    const stepInput = targetStep.input;  // Get step-specific input
     const invokeOptions: InvokeOptions = {
       targetCollection: context.targetCollection,
       jobCollectionId,
@@ -332,6 +333,7 @@ async function handleScatter(
       expiresIn,
       network,
       parentLogs: [fromLogId],
+      input: stepInput,  // Pass step-specific input
       rhiza: {
         id: rhizaId,
         path: newPath,
@@ -646,6 +648,7 @@ async function handleScatter(
 
       // Build invoke options for this target
       const newPath = [...path, stepName];
+      const stepInput = step.input;  // Get step-specific input
 
       // Find the original indices for these items
       for (const item of items) {
@@ -658,6 +661,7 @@ async function handleScatter(
           expiresIn,
           network,
           parentLogs: [fromLogId],
+          input: stepInput,  // Pass step-specific input
           batch: {
             id: scatterResult.batchId,
             index: originalIndex,
@@ -754,6 +758,7 @@ async function handleScatter(
     // Build invoke options for this target
     // Include scatterTotal so children know CAS concurrency for parent log updates
     const newPath = [...path, stepName];
+    const stepInput = step.input;  // Get step-specific input
     const invokeOptions: InvokeOptions = {
       targetCollection: context.targetCollection,
       jobCollectionId,
@@ -761,6 +766,7 @@ async function handleScatter(
       expiresIn,
       network,
       parentLogs: [fromLogId],
+      input: stepInput,  // Pass step-specific input
       rhiza: {
         id: rhizaId,
         path: newPath,
@@ -1013,6 +1019,10 @@ function buildInvokeOptions(context: InterpretContext, targetStepName?: string):
     ? [...context.path, targetStepName]
     : context.path;
 
+  // Get the target step's input configuration (if defined in the flow)
+  const targetStep = targetStepName ? context.flow[targetStepName] : undefined;
+  const stepInput = targetStep?.input;
+
   return {
     targetCollection: context.targetCollection,
     jobCollectionId: context.jobCollectionId,
@@ -1022,6 +1032,7 @@ function buildInvokeOptions(context: InterpretContext, targetStepName?: string):
     parentLogs: [context.fromLogId],
     batch: context.batchContext,
     recurseDepth: context.recurseDepth,  // Forward recurse depth unchanged
+    input: stepInput,  // Pass step-specific input to the target klados
     rhiza: {
       id: context.rhizaId,
       path: newPath,
