@@ -87,7 +87,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(branchingConvergeFlow, pdfPath);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_ocr');
+        expect(step!.klados.id).toBe('II01klados_ocr');
         expect(step!.then).toEqual({ done: true });
       });
 
@@ -98,7 +98,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(branchingConvergeFlow, imagePath);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_ocr');
+        expect(step!.klados.id).toBe('II01klados_ocr');
         expect(step!.then).toEqual({ done: true });
       });
 
@@ -126,7 +126,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(branchingSameKladosFlow, pdfPath);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_ocr'); // Same klados
+        expect(step!.klados.id).toBe('II01klados_ocr'); // Same klados
       });
 
       it('finds ocr_from_image step on image path', () => {
@@ -135,7 +135,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(branchingSameKladosFlow, imagePath);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_ocr'); // Same klados
+        expect(step!.klados.id).toBe('II01klados_ocr'); // Same klados
       });
 
       it('same klados but different steps have different then specs', () => {
@@ -146,7 +146,7 @@ describe('Branching Workflows', () => {
         const imageStep = getStepFromPath(branchingSameKladosFlow, imagePath);
 
         // Same klados ID
-        expect(pdfStep!.klados.pi).toBe(imageStep!.klados.pi);
+        expect(pdfStep!.klados.id).toBe(imageStep!.klados.id);
 
         // But different step objects (different flow keys)
         expect(pdfStep).not.toBe(imageStep);
@@ -161,7 +161,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(deepBranchingFlow, normalPath);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_stamp');
+        expect(step!.klados.id).toBe('II01klados_stamp');
       });
 
       it('finds stamp_c step via fast track (1 stamp)', () => {
@@ -171,7 +171,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(deepBranchingFlow, fastPath);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_stamp');
+        expect(step!.klados.id).toBe('II01klados_stamp');
       });
 
       it('same stamp_c step but path shows different history', () => {
@@ -201,7 +201,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(duplicateKladosFlow, path);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_stamp');
+        expect(step!.klados.id).toBe('II01klados_stamp');
         expect(step!.then).toEqual({ pass: 'second_stamp' });
       });
 
@@ -211,7 +211,7 @@ describe('Branching Workflows', () => {
         const step = getStepFromPath(duplicateKladosFlow, path);
 
         expect(step).toBeDefined();
-        expect(step!.klados.pi).toBe('II01klados_stamp');
+        expect(step!.klados.id).toBe('II01klados_stamp');
         expect(step!.then).toEqual({ done: true });
       });
 
@@ -223,7 +223,7 @@ describe('Branching Workflows', () => {
         const step2 = getStepFromPath(duplicateKladosFlow, path2);
 
         // Same klados
-        expect(step1!.klados.pi).toBe(step2!.klados.pi);
+        expect(step1!.klados.id).toBe(step2!.klados.id);
 
         // Different then specs
         expect(step1!.then).not.toEqual(step2!.then);

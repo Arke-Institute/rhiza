@@ -7,7 +7,7 @@
  * Key benefits:
  * - Type hints avoid runtime discoverTargetType() API calls
  * - Labels provide display context without fetching
- * - Duck typing: any object with `pi` field is treated as EntityRef
+ * - Duck typing: any object with `id` field is treated as EntityRef
  */
 
 // =============================================================================
@@ -22,7 +22,7 @@
  * flow: {
  *   'klados_a': {
  *     then: {
- *       pass: { pi: 'klados_b', type: 'klados', label: 'Processor' }
+ *       pass: { id: 'klados_b', type: 'klados', label: 'Processor' }
  *     }
  *   }
  * }
@@ -30,7 +30,7 @@
  */
 export interface EntityRef {
   /** The referenced entity's persistent identifier (required) */
-  pi: string;
+  id: string;
 
   /** Type hint: "klados" or "rhiza" - avoids runtime type discovery when present */
   type?: 'klados' | 'rhiza';
@@ -49,14 +49,14 @@ export interface EntityRef {
 /**
  * Check if a value is an EntityRef
  *
- * Uses duck typing: any object with a `pi` string field is considered a ref.
+ * Uses duck typing: any object with an `id` string field is considered a ref.
  */
 export function isEntityRef(value: unknown): value is EntityRef {
   return (
     typeof value === 'object' &&
     value !== null &&
-    'pi' in value &&
-    typeof (value as EntityRef).pi === 'string'
+    'id' in value &&
+    typeof (value as EntityRef).id === 'string'
   );
 }
 
@@ -79,5 +79,5 @@ export function ref(
   pi: string,
   options?: { type?: 'klados' | 'rhiza'; label?: string; description?: string }
 ): EntityRef {
-  return { pi, ...options };
+  return { id: pi, ...options };
 }

@@ -231,7 +231,7 @@ export async function getWorkflowLogs(
 ): Promise<KladosLogEntry[]> {
   // Query collection for all klados_log entities
   const response = await apiRequest<{
-    entities: Array<{ pi: string }>;
+    entities: Array<{ id: string }>;
   }>('GET', `/collections/${jobCollectionId}/entities?type=klados_log`);
 
   if (!response.entities?.length) {
@@ -244,7 +244,7 @@ export async function getWorkflowLogs(
     try {
       const log = await apiRequest<KladosLogEntry>(
         'GET',
-        `/entities/${entity.pi}`
+        `/entities/${entity.id}`
       );
       logs.push(log);
     } catch {

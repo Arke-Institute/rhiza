@@ -53,10 +53,19 @@
  */
 
 // Configuration
-export { configureTestClient, getConfig, resetTestClient, apiRequest, sleep, log } from './client.js';
+export { configureTestClient, getConfig, getClient, resetTestClient, apiRequest, sleep, log } from './client.js';
 
-// Entity operations
-export { createEntity, getEntity, deleteEntity, createCollection, getCollectionEntities } from './entities.js';
+// Entity operations (pass-through to SDK types)
+export {
+  createEntity,
+  getEntity,
+  deleteEntity,
+  createCollection,
+  getCollectionEntities,
+  // SDK body types for convenience
+  type CreateEntityBody,
+  type CreateCollectionBody,
+} from './entities.js';
 
 // Log utilities
 export {
@@ -102,8 +111,6 @@ export type {
   InvokeResult,
   LogMessage,
   KladosLogEntry,
-  CreateEntityOptions,
-  CreateCollectionOptions,
   InvokeKladosOptions,
   WaitForLogOptions,
   LogMessageCriteria,

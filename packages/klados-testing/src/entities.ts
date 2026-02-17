@@ -1,39 +1,35 @@
 /**
  * Entity and collection operations for klados testing
+ *
+ * These functions pass through to the SDK types directly.
+ * For full SDK access, use getClient() instead.
  */
 
+import { components } from '@arke-institute/sdk';
 import { apiRequest } from './client.js';
-import type {
-  Entity,
-  Collection,
-  CollectionEntities,
-  CreateEntityOptions,
-  CreateCollectionOptions,
-} from './types.js';
+import type { Entity, Collection, CollectionEntities } from './types.js';
+
+// Re-export SDK types for convenience
+export type CreateEntityBody = components['schemas']['CreateEntityRequest'];
+export type CreateCollectionBody = components['schemas']['CreateCollectionRequest'];
 
 /**
  * Create a new entity
+ *
+ * Pass-through to SDK types - accepts any fields the API supports.
  *
  * @example
  * ```typescript
  * const entity = await createEntity({
  *   type: 'document',
  *   properties: { title: 'Test Document' },
- *   collectionId: collection.id,
+ *   collection: collection.id,
+ *   relationships: [{ predicate: 'related_to', peer: otherId }],
  * });
  * ```
  */
-export async function createEntity(options: CreateEntityOptions): Promise<Entity> {
-  const body: Record<string, unknown> = {
-    type: options.type,
-    properties: options.properties,
-  };
-
-  if (options.collectionId) {
-    body.collection = options.collectionId;
-  }
-
-  return apiRequest<Entity>('POST', '/entities', body);
+export async function createEntity(body: CreateEntityBody): Promise<Entity> {
+  return apiRequest<Entity>('POST', '/entities', body as Record<string, unknown>);
 }
 
 /**
@@ -65,7 +61,7 @@ export async function deleteEntity(id: string): Promise<void> {
 /**
  * Create a new collection
  *
- * Uses POST /collections to get proper owner permissions.
+ * Pass-through to SDK types - accepts any fields the API supports.
  * By default, collections include standard roles with public *:view access.
  *
  * @example
@@ -83,15 +79,9 @@ export async function deleteEntity(id: string): Promise<void> {
  * ```
  */
 export async function createCollection(
-  options: CreateCollectionOptions
+  body: CreateCollectionBody
 ): Promise<Collection> {
-  return apiRequest<Collection>('POST', '/collections', {
-    label: options.label,
-    description: options.description,
-    allowed_types: options.allowedTypes,
-    roles: options.roles,
-    use_roles_default: options.useRolesDefault,
-  });
+  return apiRequest<Collection>('POST', '/collections', body as Record<string, unknown>);
 }
 
 /**

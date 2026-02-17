@@ -2,10 +2,12 @@
  * API client utilities for klados testing
  */
 
+import { createArkeClient, type ArkeClient } from '@arke-institute/sdk';
 import type { TestConfig } from './types.js';
 
 // Global configuration
 let globalConfig: TestConfig | null = null;
+let globalClient: ArkeClient | null = null;
 
 /**
  * Configure the test client with API credentials
@@ -23,6 +25,11 @@ let globalConfig: TestConfig | null = null;
  */
 export function configureTestClient(config: TestConfig): void {
   globalConfig = config;
+  globalClient = createArkeClient({
+    baseUrl: config.apiBase,
+    authToken: config.userKey,
+    network: config.network,
+  });
 }
 
 /**
@@ -44,6 +51,33 @@ export function getConfig(): TestConfig {
  */
 export function resetTestClient(): void {
   globalConfig = null;
+  globalClient = null;
+}
+
+/**
+ * Get the configured ArkeClient for direct SDK access
+ *
+ * Use this when you need full SDK functionality beyond the convenience wrappers.
+ *
+ * @example
+ * ```typescript
+ * const client = getClient();
+ *
+ * // Use SDK directly
+ * const { data, error } = await client.api.POST('/entities', {
+ *   body: { type: 'doc', properties: {...}, collection: collectionId }
+ * });
+ * ```
+ *
+ * @throws Error if configureTestClient has not been called
+ */
+export function getClient(): ArkeClient {
+  if (!globalClient) {
+    throw new Error(
+      'Test client not configured. Call configureTestClient() first.'
+    );
+  }
+  return globalClient;
 }
 
 /**

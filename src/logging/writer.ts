@@ -128,7 +128,6 @@ export async function writeKladosLog(
   const relationships: Array<{
     predicate: string;
     peer: string;
-    direction: 'outgoing';
   }> = [];
 
   // Add received_from relationships for graph traversal
@@ -138,7 +137,6 @@ export async function writeKladosLog(
       relationships.push({
         predicate: 'received_from',
         peer: parentLogId,
-        direction: 'outgoing',
       });
     }
   }
@@ -189,7 +187,6 @@ export async function writeKladosLog(
                 {
                   predicate: 'first_log',
                   peer: logEntityId,
-                  direction: 'outgoing',
                 },
               ],
             },
@@ -270,7 +267,6 @@ export async function writeKladosLog(
                         {
                           predicate: 'sent_to',
                           peer: logEntityId,
-                          direction: 'outgoing',
                         },
                       ],
                     },
