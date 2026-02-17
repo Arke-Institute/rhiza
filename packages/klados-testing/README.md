@@ -43,7 +43,7 @@ const collection = await createCollection({
 const entity = await createEntity({
   type: 'document',
   properties: { title: 'Test' },
-  collectionId: collection.id,
+  collection: collection.id,
 });
 
 // Cleanup

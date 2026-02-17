@@ -34,7 +34,7 @@ async function createRhizaEntity(
   });
 
   if (error || !data) {
-    throw new Error(`Failed to create rhiza: ${error?.error || 'Unknown error'}`);
+    throw new Error(`Failed to create rhiza: ${JSON.stringify(error) || 'Unknown error'}`);
   }
 
   return { id: data.id, cid: data.cid };

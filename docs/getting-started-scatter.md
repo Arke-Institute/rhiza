@@ -345,7 +345,7 @@ describe('my scatter workflow', () => {
         label: 'Test Source',
         copy_count: 3,  // Create 3 copies
       },
-      collectionId: collection.id,
+      collection: collection.id,
     });
     log(`Created entity: ${entity.id}`);
   });

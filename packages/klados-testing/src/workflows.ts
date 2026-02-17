@@ -180,7 +180,7 @@ export async function invokeRhiza(
  *     'first_stamp': { klados: { pi: 'klados_stamp' }, then: { pass: 'second_stamp' } },
  *     'second_stamp': { klados: { pi: 'klados_stamp' }, then: { done: true } },
  *   },
- *   collectionId: collection.id,
+ *   collection: collection.id,
  * });
  * ```
  *

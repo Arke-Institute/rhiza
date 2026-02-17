@@ -28,7 +28,7 @@
  * const entity = await createEntity({
  *   type: 'document',
  *   properties: { content: 'test' },
- *   collectionId: collection.id,
+ *   collection: collection.id,
  * });
  *
  * // Invoke klados

@@ -208,7 +208,7 @@ describe('scatter workflow', () => {
         label: 'Scatter Source',
         copy_count: 3,  // Each scatter creates 3 copies
       },
-      collectionId: targetCollection.id,
+      collection: targetCollection.id,
     });
   });
 

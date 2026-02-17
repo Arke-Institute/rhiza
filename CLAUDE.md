@@ -107,7 +107,7 @@ Tests are in `src/__tests__/unit/`. Run with `npm test`.
 
 ## Conventions
 
-- Use `EntityRef` (`{ pi: string, type?: 'klados' | 'rhiza' }`) for targets, not raw strings
+- Use `EntityRef` (`{ id: string, type?: 'klados' | 'rhiza' }`) for targets, not raw strings
 - Error codes use `KladosErrorCode` constants with default retryability
 - Log IDs are prefixed with `log_`, batch IDs with `batch_`
 - All timestamps are ISO 8601 strings

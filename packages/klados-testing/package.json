@@ -1,6 +1,6 @@
 {
   "name": "@arke-institute/klados-testing",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Test utilities for klados workers on the Arke network",
   "type": "module",
   "main": "./dist/index.js",
@@ -29,7 +29,7 @@
     }
   },
   "devDependencies": {
-    "@arke-institute/sdk": "^3.0.0",
+    "@arke-institute/sdk": "^3.6.13",
     "typescript": "^5.7.2"
   },
   "keywords": [
