@@ -44,15 +44,6 @@ export interface KladosJobConfig {
    * - JWT token from Supabase auth
    */
   authToken?: string;
-
-  /**
-   * URL of the relationship updater service for fire-and-forget parent log updates.
-   * If provided, parent log updates will be queued asynchronously instead of
-   * blocking the worker (which can cause waitUntil timeouts with large scatters).
-   *
-   * Default: https://scatter-utility.arke.institute
-   */
-  relationshipUpdaterUrl?: string;
 }
 
 /**
@@ -247,8 +238,6 @@ export class KladosJob {
 
     // Write initial log entry
     // Use relationship updater service for fire-and-forget parent log updates
-    const relationshipUpdaterUrl = this.config.relationshipUpdaterUrl ?? 'https://scatter-utility.arke.institute';
-
     const { fileId } = await writeKladosLog({
       client: this.client,
       jobCollectionId: this.request.job_collection,
@@ -256,10 +245,6 @@ export class KladosJob {
       messages: this.log.getMessages(),
       agentId: this.config.agentId,
       agentVersion: this.config.agentVersion,
-      relationshipUpdaterUrl,
-      authToken: this.config.authToken,
-      apiBase: this.request.api_base,
-      network: this.request.network,
     });
 
     this.logFileId = fileId;

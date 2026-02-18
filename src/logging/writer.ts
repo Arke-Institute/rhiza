@@ -1,18 +1,46 @@
 /**
  * Log Writer - SDK utilities for writing klados logs
  *
- * Uses the SDK to write log entries to the job collection.
- * CAS retry is handled by the SDK's withCasRetry utility.
+ * Uses fire-and-forget additive updates for log relationships and status.
+ * This eliminates CAS retry delays that were causing 5+ minute handoff times.
  */
 
 import type { ArkeClient } from '@arke-institute/sdk';
-import { withCasRetry } from '@arke-institute/sdk';
 import type {
   KladosLogEntry,
   JobLog,
   LogMessage,
   HandoffRecord,
 } from '../types';
+
+/**
+ * Queue additive updates (fire-and-forget)
+ *
+ * Uses /updates/additive for CAS-conflict-free updates.
+ * Returns immediately, updates are processed asynchronously by the server.
+ *
+ * This eliminates the CAS retry delays that were causing 5+ minute handoff times.
+ */
+function queueAdditiveUpdates(
+  client: ArkeClient,
+  updates: Array<{
+    entity_id: string;
+    properties?: Record<string, unknown>;
+    relationships_add?: Array<{
+      predicate: string;
+      peer: string;
+      peer_type?: string;
+    }>;
+    note?: string;
+  }>
+): void {
+  // Fire and forget - don't await
+  client.api.POST('/updates/additive', {
+    body: { updates },
+  }).catch((err) => {
+    console.error('[rhiza] Failed to queue additive updates:', err);
+  });
+}
 
 /**
  * Options for writing a klados log
@@ -33,31 +61,6 @@ export interface WriteLogOptions {
   /** Agent info */
   agentId: string;
   agentVersion: string;
-
-  /**
-   * URL of the relationship updater service for fire-and-forget parent log updates.
-   * If provided, parent log updates will be queued to this service instead of
-   * being done inline (which can cause waitUntil timeouts with large scatters).
-   */
-  relationshipUpdaterUrl?: string;
-
-  /**
-   * Auth token for the relationship updater service.
-   * Required if relationshipUpdaterUrl is provided.
-   */
-  authToken?: string;
-
-  /**
-   * API base URL for the relationship updater service.
-   * Required if relationshipUpdaterUrl is provided.
-   */
-  apiBase?: string;
-
-  /**
-   * Network (test/main) for the relationship updater service.
-   * Required if relationshipUpdaterUrl is provided.
-   */
-  network?: 'test' | 'main';
 }
 
 /**
@@ -88,10 +91,6 @@ export async function writeKladosLog(
     messages,
     agentId,
     agentVersion,
-    relationshipUpdaterUrl,
-    authToken,
-    apiBase,
-    network,
   } = options;
 
   // Build the job log structure
@@ -141,143 +140,46 @@ export async function writeKladosLog(
     }
   }
 
-  // 3. Add relationships to the log entity if needed (CAS retry)
+  // 3. Add relationships to the log entity if needed (fire-and-forget)
   if (relationships.length > 0) {
-    await withCasRetry(
-      {
-        getTip: async () => {
-          const { data, error } = await client.api.GET('/entities/{id}/tip', {
-            params: { path: { id: logEntityId } },
-          });
-          if (error || !data) throw new Error('Failed to get log entity tip');
-          return data.cid;
-        },
-        update: async (tip: string) => {
-          return client.api.PUT('/entities/{id}', {
-            params: { path: { id: logEntityId } },
-            body: {
-              expect_tip: tip,
-              relationships_add: relationships,
-            },
-          });
-        },
-      },
-      { concurrency: 100 }
-    );
+    queueAdditiveUpdates(client, [{
+      entity_id: logEntityId,
+      relationships_add: relationships,
+      note: 'Add received_from relationships to log',
+    }]);
   }
 
   // 4. If this is the first log (no parent logs), add a first_log relationship
-  // from the job collection to this log for easy discovery
+  // from the job collection to this log for easy discovery (fire-and-forget)
   if (!hasParentLogs) {
-    await withCasRetry(
-      {
-        getTip: async () => {
-          const { data, error } = await client.api.GET('/entities/{id}/tip', {
-            params: { path: { id: jobCollectionId } },
-          });
-          if (error || !data) throw new Error('Failed to get job collection tip');
-          return data.cid;
-        },
-        update: async (tip: string) => {
-          return client.api.PUT('/entities/{id}', {
-            params: { path: { id: jobCollectionId } },
-            body: {
-              expect_tip: tip,
-              relationships_add: [
-                {
-                  predicate: 'first_log',
-                  peer: logEntityId,
-                },
-              ],
-            },
-          });
-        },
-      },
-      { concurrency: 10 }
-    );
+    queueAdditiveUpdates(client, [{
+      entity_id: jobCollectionId,
+      relationships_add: [{
+        predicate: 'first_log',
+        peer: logEntityId,
+      }],
+      note: 'Add first_log relationship to job collection',
+    }]);
   }
 
   // 5. Update parent logs to add sent_to relationship pointing to this log
   // This enables traversal using only outgoing relationships (no indexing lag)
+  // Uses fire-and-forget additive updates - no more CAS retry delays!
   if (hasParentLogs) {
     const parentLogIds = entry.received.from_logs!;
-    const batchContext = entry.received.batch;
-    const scatterTotal = entry.received.scatter_total;
 
-    // If relationship updater service is available, use fire-and-forget
-    // This avoids waitUntil timeouts with large scatters
-    if (relationshipUpdaterUrl && authToken && apiBase && network) {
-      // Fire-and-forget: queue updates to the relationship updater service
-      // Don't await - let it complete asynchronously
-      for (const parentLogId of parentLogIds) {
-        // Use fetch directly without await for true fire-and-forget
-        fetch(`${relationshipUpdaterUrl}/relationships/queue`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': authToken.startsWith('ak_') || authToken.startsWith('uk_')
-              ? `ApiKey ${authToken}`
-              : `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({
-            parentLogId,
-            childLogId: logEntityId,
-            apiBase,
-            network,
-          }),
-        }).catch((err) => {
-          // Log but don't throw - fire and forget
-          console.error(`[writeKladosLog] Failed to queue parent log update: ${err}`);
-        });
-      }
-    } else {
-      // Fallback: inline CAS update (may timeout with large scatters)
-      // Determine concurrency based on context:
-      // - Scatter with gather: many siblings update same parent → use batch.total
-      // - Scatter without gather: use scatter_total if provided
-      // - Gather/Pass: only this child updates each parent → use 1
-      const isScatterChild = parentLogIds.length === 1 && (batchContext || scatterTotal);
-      const concurrencyPerParent = isScatterChild
-        ? (batchContext?.total ?? scatterTotal ?? 1)
-        : 1;
-
-      // Batch parallel updates for gather scenarios (many parents)
-      const PARENT_UPDATE_BATCH_SIZE = 100;
-
-      for (let i = 0; i < parentLogIds.length; i += PARENT_UPDATE_BATCH_SIZE) {
-        const parentBatch = parentLogIds.slice(i, i + PARENT_UPDATE_BATCH_SIZE);
-
-        await Promise.all(
-          parentBatch.map((parentLogId) =>
-            withCasRetry(
-              {
-                getTip: async () => {
-                  const { data, error } = await client.api.GET('/entities/{id}/tip', {
-                    params: { path: { id: parentLogId } },
-                  });
-                  if (error || !data) throw new Error(`Failed to get parent log tip: ${parentLogId}`);
-                  return data.cid;
-                },
-                update: async (tip: string) => {
-                  return client.api.PUT('/entities/{id}', {
-                    params: { path: { id: parentLogId } },
-                    body: {
-                      expect_tip: tip,
-                      relationships_add: [
-                        {
-                          predicate: 'sent_to',
-                          peer: logEntityId,
-                        },
-                      ],
-                    },
-                  });
-                },
-              },
-              { concurrency: concurrencyPerParent }
-            )
-          )
-        );
-      }
+    // Batch all parent updates into a single additive call (max 100 per call)
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < parentLogIds.length; i += BATCH_SIZE) {
+      const batch = parentLogIds.slice(i, i + BATCH_SIZE);
+      queueAdditiveUpdates(client, batch.map(parentLogId => ({
+        entity_id: parentLogId,
+        relationships_add: [{
+          predicate: 'sent_to',
+          peer: logEntityId,
+        }],
+        note: 'Add sent_to relationship from parent log',
+      })));
     }
   }
 
@@ -288,49 +190,24 @@ export async function writeKladosLog(
  * Update log entry with handoff records
  *
  * Called after handoffs are made to record what was invoked.
- * Uses CAS retry for concurrent safety.
+ * Uses fire-and-forget additive updates with deep merge.
  */
-export async function updateLogWithHandoffs(
+export function updateLogWithHandoffs(
   client: ArkeClient,
   logFileId: string,
   handoffs: HandoffRecord[]
-): Promise<void> {
-  await withCasRetry(
-    {
-      getTip: async () => {
-        const { data, error } = await client.api.GET('/entities/{id}/tip', {
-          params: { path: { id: logFileId } },
-        });
-        if (error || !data) throw new Error('Failed to get log tip');
-        return data.cid;
-      },
-      update: async (tip: string) => {
-        // Get current entity to merge with existing data
-        const { data: entity, error: getError } = await client.api.GET('/entities/{id}', {
-          params: { path: { id: logFileId } },
-        });
-
-        if (getError || !entity) {
-          throw new Error('Failed to get log entity');
-        }
-
-        const logData = entity.properties.log_data as JobLog;
-        logData.entry.handoffs = handoffs;
-
-        return client.api.PUT('/entities/{id}', {
-          params: { path: { id: logFileId } },
-          body: {
-            expect_tip: tip,
-            properties: {
-              ...entity.properties,
-              log_data: logData as unknown as Record<string, unknown>,
-            },
-          },
-        });
+): void {
+  queueAdditiveUpdates(client, [{
+    entity_id: logFileId,
+    properties: {
+      log_data: {
+        entry: {
+          handoffs,
+        },
       },
     },
-    { concurrency: 10 }
-  );
+    note: 'Add handoff records to log',
+  }]);
 }
 
 /**
@@ -355,60 +232,41 @@ export interface UpdateLogStatusOptions {
 /**
  * Update log entry status (e.g., to done or error)
  *
- * Uses CAS retry for concurrent safety.
+ * Uses fire-and-forget additive updates with deep merge.
  */
-export async function updateLogStatus(
+export function updateLogStatus(
   client: ArkeClient,
   logFileId: string,
   status: 'running' | 'done' | 'error',
   options?: UpdateLogStatusOptions
-): Promise<void> {
+): void {
   const { logError, messages } = options ?? {};
+  const completedAt = new Date().toISOString();
 
-  await withCasRetry(
-    {
-      getTip: async () => {
-        const { data, error } = await client.api.GET('/entities/{id}/tip', {
-          params: { path: { id: logFileId } },
-        });
-        if (error || !data) throw new Error('Failed to get log tip');
-        return data.cid;
-      },
-      update: async (tip: string) => {
-        const { data: entity, error: getError } = await client.api.GET('/entities/{id}', {
-          params: { path: { id: logFileId } },
-        });
+  // Build the nested property update
+  const entryUpdate: Record<string, unknown> = {
+    status,
+    completed_at: completedAt,
+  };
 
-        if (getError || !entity) {
-          throw new Error('Failed to get log entity');
-        }
+  if (logError) {
+    entryUpdate.error = logError;
+  }
 
-        const logData = entity.properties.log_data as JobLog;
-        logData.entry.status = status;
-        logData.entry.completed_at = new Date().toISOString();
+  const logDataUpdate: Record<string, unknown> = {
+    entry: entryUpdate,
+  };
 
-        if (logError) {
-          logData.entry.error = logError;
-        }
+  if (messages) {
+    logDataUpdate.messages = messages;
+  }
 
-        // Update messages if provided
-        if (messages) {
-          logData.messages = messages;
-        }
-
-        return client.api.PUT('/entities/{id}', {
-          params: { path: { id: logFileId } },
-          body: {
-            expect_tip: tip,
-            properties: {
-              ...entity.properties,
-              status, // Also update top-level for easy querying
-              log_data: logData as unknown as Record<string, unknown>,
-            },
-          },
-        });
-      },
+  queueAdditiveUpdates(client, [{
+    entity_id: logFileId,
+    properties: {
+      status, // Top-level for easy querying
+      log_data: logDataUpdate,
     },
-    { concurrency: 10 }
-  );
+    note: `Update log status to ${status}`,
+  }]);
 }
