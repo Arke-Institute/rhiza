@@ -1,8 +1,8 @@
 /**
  * Log Writer - SDK utilities for writing klados logs
  *
- * Uses fire-and-forget additive updates for log relationships and status.
- * This eliminates CAS retry delays that were causing 5+ minute handoff times.
+ * Uses fire-and-forget additive updates for log relationships.
+ * Status updates use additive (awaited to ensure request is sent).
  */
 
 import type { ArkeClient } from '@arke-institute/sdk';
@@ -164,7 +164,7 @@ export async function writeKladosLog(
 
   // 5. Update parent logs to add sent_to relationship pointing to this log
   // This enables traversal using only outgoing relationships (no indexing lag)
-  // Uses fire-and-forget additive updates - no more CAS retry delays!
+  // IMPORTANT: Must await these updates - they're critical for tree traversal
   if (hasParentLogs) {
     const parentLogIds = entry.received.from_logs!;
 
@@ -172,14 +172,18 @@ export async function writeKladosLog(
     const BATCH_SIZE = 100;
     for (let i = 0; i < parentLogIds.length; i += BATCH_SIZE) {
       const batch = parentLogIds.slice(i, i + BATCH_SIZE);
-      queueAdditiveUpdates(client, batch.map(parentLogId => ({
-        entity_id: parentLogId,
-        relationships_add: [{
-          predicate: 'sent_to',
-          peer: logEntityId,
-        }],
-        note: 'Add sent_to relationship from parent log',
-      })));
+      await client.api.POST('/updates/additive', {
+        body: {
+          updates: batch.map(parentLogId => ({
+            entity_id: parentLogId,
+            relationships_add: [{
+              predicate: 'sent_to',
+              peer: logEntityId,
+            }],
+            note: 'Add sent_to relationship from parent log',
+          })),
+        },
+      });
     }
   }
 
@@ -232,9 +236,8 @@ export interface UpdateLogStatusOptions {
 /**
  * Update log entry status (e.g., to done or error)
  *
- * Uses additive updates with deep merge.
- * Unlike other updates, this awaits completion to ensure status is visible
- * for workflow completion detection.
+ * Returns a promise that resolves when the additive update is queued.
+ * The actual update is eventually consistent.
  */
 export async function updateLogStatus(
   client: ArkeClient,
@@ -263,7 +266,7 @@ export async function updateLogStatus(
     logDataUpdate.messages = messages;
   }
 
-  // Await the status update - this ensures status is visible for completion detection
+  // Await additive update to ensure request is sent before worker terminates
   await client.api.POST('/updates/additive', {
     body: {
       updates: [{
