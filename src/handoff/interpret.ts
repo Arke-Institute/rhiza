@@ -14,7 +14,9 @@ import type {
   HandoffRecord,
   InvocationRecord,
   Output,
+  AnyEntityRef,
 } from '../types';
+import { getRefId } from '../types/refs';
 import {
   type RhizaRuntimeConfig,
   SCATTER_UTILITY_URL,
@@ -217,11 +219,11 @@ async function handlePass(
     const targetKladosRef = targetStep.klados;
 
     // Discover target type (klados or rhiza)
-    const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.id);
+    const targetType = targetKladosRef.type || await discoverTargetType(client, getRefId(targetKladosRef as AnyEntityRef));
 
     // Track primary target (first non-done group)
     if (!primaryTarget) {
-      primaryTarget = targetKladosRef.id;
+      primaryTarget = getRefId(targetKladosRef as AnyEntityRef);
       primaryTargetType = targetType;
     }
 
@@ -234,7 +236,7 @@ async function handlePass(
     // Invoke the target klados with this group's outputs
     const result = await invokeTarget(
       client,
-      targetKladosRef.id,
+      getRefId(targetKladosRef as AnyEntityRef),
       targetType,
       entityIds,
       invokeOptions
@@ -311,7 +313,7 @@ async function handleScatter(
   const targetKladosRef = targetStep.klados;
 
   // Discover target type
-  const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.id);
+  const targetType = targetKladosRef.type || await discoverTargetType(client, getRefId(targetKladosRef as AnyEntityRef));
 
   // Find the gather target step name from the scatter target's flow step (optional)
   const gatherStepName = findGatherTarget(flow, targetStepName);
@@ -363,10 +365,10 @@ async function handleScatter(
         jobCollectionId,
         sourceKladosId: kladosId,
         targetStepName,
-        targetKladosId: targetKladosRef.id,
+        targetKladosId: getRefId(targetKladosRef as AnyEntityRef),
         targetType,
         gatherStepName,
-        gatherKladosId: gatherStep.klados.id,
+        gatherKladosId: getRefId(gatherStep.klados as AnyEntityRef),
         outputs: allEntityIds,
         fromLogId,
         apiBase,
@@ -405,17 +407,17 @@ async function handleScatter(
             throw new Error(`Target step '${resolvedTarget}' not found in flow`);
           }
           const kladosRef = step.klados;
-          const type = kladosRef.type || await discoverTargetType(client, kladosRef.id);
+          const type = kladosRef.type || await discoverTargetType(client, getRefId(kladosRef as AnyEntityRef));
 
           // Track primary target (first non-done item)
           if (!primaryTarget) {
-            primaryTarget = kladosRef.id;
+            primaryTarget = getRefId(kladosRef as AnyEntityRef);
             primaryTargetType = type;
           }
 
           delegateOutputs.push({
             id: item.entity_id,
-            target: kladosRef.id,
+            target: getRefId(kladosRef as AnyEntityRef),
             targetType: type,
             stepName: resolvedTarget,
           });
@@ -438,12 +440,12 @@ async function handleScatter(
       if (delegateOutputs.length === 0) {
         return {
           action: 'scatter',
-          target: targetKladosRef.id,
+          target: getRefId(targetKladosRef as AnyEntityRef),
           targetType,
           batch: scatterResult.batch,
           handoffRecord: {
             type: 'scatter',
-            target: targetKladosRef.id,
+            target: getRefId(targetKladosRef as AnyEntityRef),
             target_type: targetType,
             batch_id: scatterResult.batchId,
             outputs: allEntityIds,
@@ -510,11 +512,11 @@ async function handleScatter(
           throw new Error(`Target step '${stepName}' not found in flow`);
         }
         const kladosRef = step.klados;
-        const type = kladosRef.type || await discoverTargetType(client, kladosRef.id);
+        const type = kladosRef.type || await discoverTargetType(client, getRefId(kladosRef as AnyEntityRef));
 
         // Track primary target (first non-done group)
         if (!primaryTarget) {
-          primaryTarget = kladosRef.id;
+          primaryTarget = getRefId(kladosRef as AnyEntityRef);
           primaryTargetType = type;
         }
 
@@ -522,7 +524,7 @@ async function handleScatter(
         for (const item of items) {
           delegateOutputs.push({
             id: item.entity_id,
-            target: kladosRef.id,
+            target: getRefId(kladosRef as AnyEntityRef),
             targetType: type,
             stepName,
           });
@@ -588,10 +590,10 @@ async function handleScatter(
       jobCollectionId,
       sourceKladosId: kladosId,
       targetStepName,
-      targetKladosId: targetKladosRef.id,
+      targetKladosId: getRefId(targetKladosRef as AnyEntityRef),
       targetType,
       gatherStepName,
-      gatherKladosId: gatherStep.klados.id,
+      gatherKladosId: getRefId(gatherStep.klados as AnyEntityRef),
       outputs: allEntityIds,
       fromLogId,
       apiBase,
@@ -641,11 +643,11 @@ async function handleScatter(
         throw new Error(`Target step '${stepName}' not found in flow`);
       }
       const kladosRef = step.klados;
-      const type = kladosRef.type || await discoverTargetType(client, kladosRef.id);
+      const type = kladosRef.type || await discoverTargetType(client, getRefId(kladosRef as AnyEntityRef));
 
       // Track primary target (first non-done group)
       if (!primaryTarget) {
-        primaryTarget = kladosRef.id;
+        primaryTarget = getRefId(kladosRef as AnyEntityRef);
         primaryTargetType = type;
       }
 
@@ -678,7 +680,7 @@ async function handleScatter(
 
         const result = await invokeTarget(
           client,
-          kladosRef.id,
+          getRefId(kladosRef as AnyEntityRef),
           type,
           item.entity_id,
           invokeOptions
@@ -695,12 +697,12 @@ async function handleScatter(
     if (!primaryTarget) {
       return {
         action: 'scatter',
-        target: targetKladosRef.id,
+        target: getRefId(targetKladosRef as AnyEntityRef),
         targetType,
         batch: scatterResult.batch,
         handoffRecord: {
           type: 'scatter',
-          target: targetKladosRef.id,
+          target: getRefId(targetKladosRef as AnyEntityRef),
           target_type: targetType,
           batch_id: scatterResult.batchId,
           outputs: allEntityIds,
@@ -750,11 +752,11 @@ async function handleScatter(
     const kladosRef = step.klados;
 
     // Discover target type
-    const type = kladosRef.type || await discoverTargetType(client, kladosRef.id);
+    const type = kladosRef.type || await discoverTargetType(client, getRefId(kladosRef as AnyEntityRef));
 
     // Track primary target (first non-done group)
     if (!primaryTarget) {
-      primaryTarget = kladosRef.id;
+      primaryTarget = getRefId(kladosRef as AnyEntityRef);
       primaryTargetType = type;
     }
 
@@ -786,7 +788,7 @@ async function handleScatter(
         const globalIndex = i + chunkIndex;
         const result = await invokeTarget(
           client,
-          kladosRef.id,
+          getRefId(kladosRef as AnyEntityRef),
           type,
           entityId,
           invokeOptions
@@ -871,7 +873,7 @@ async function handleGather(
   const targetKladosRef = targetStep.klados;
 
   // Discover target type
-  const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.id);
+  const targetType = targetKladosRef.type || await discoverTargetType(client, getRefId(targetKladosRef as AnyEntityRef));
 
   // Flatten all outputs from all slots
   const allOutputsFlat = slotResult.allOutputs?.flat() ?? [];
@@ -884,7 +886,7 @@ async function handleGather(
   // Invoke the gather target with all outputs
   const result = await invokeTarget(
     client,
-    targetKladosRef.id,
+    getRefId(targetKladosRef as AnyEntityRef),
     targetType,
     allOutputsFlat,
     invokeOptions
@@ -892,14 +894,14 @@ async function handleGather(
 
   return {
     action: 'gather_trigger',
-    target: targetKladosRef.id,
+    target: getRefId(targetKladosRef as AnyEntityRef),
     targetType,
     invocations: [result.invocation],
     batch: slotResult.batch,
     allOutputs: slotResult.allOutputs,
     handoffRecord: {
       type: 'gather',
-      target: targetKladosRef.id,
+      target: getRefId(targetKladosRef as AnyEntityRef),
       target_type: targetType,
       batch_id: batchContext.id,
       invocations: [result.invocation],
@@ -951,11 +953,11 @@ async function handleRecurse(
     const targetKladosRef = targetStep.klados;
 
     // Discover target type (klados or rhiza)
-    const targetType = targetKladosRef.type || await discoverTargetType(client, targetKladosRef.id);
+    const targetType = targetKladosRef.type || await discoverTargetType(client, getRefId(targetKladosRef as AnyEntityRef));
 
     // Track primary target (first non-done group)
     if (!primaryTarget) {
-      primaryTarget = targetKladosRef.id;
+      primaryTarget = getRefId(targetKladosRef as AnyEntityRef);
       primaryTargetType = targetType;
     }
 
@@ -969,7 +971,7 @@ async function handleRecurse(
     // Invoke the target klados with this group's outputs
     const result = await invokeTarget(
       client,
-      targetKladosRef.id,
+      getRefId(targetKladosRef as AnyEntityRef),
       targetType,
       entityIds,
       invokeOptions

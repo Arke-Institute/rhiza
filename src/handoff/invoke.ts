@@ -10,8 +10,10 @@ import type {
   KladosRequest,
   BatchContext,
   InvocationRecord,
+  AnyEntityRef,
 } from '../types';
 import { generateId } from '../utils';
+import { getRefId } from '../types/refs';
 
 /**
  * Options for invoking a target
@@ -310,7 +312,7 @@ export async function invokeRhiza(
       };
     }
 
-    const entryKladosId = flow[entryStepName].klados.id;
+    const entryKladosId = getRefId(flow[entryStepName].klados as AnyEntityRef);
 
     // Build options for the sub-rhiza's entry klados
     // Key: we create a NEW rhiza context for the sub-workflow,
