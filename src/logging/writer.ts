@@ -232,14 +232,16 @@ export interface UpdateLogStatusOptions {
 /**
  * Update log entry status (e.g., to done or error)
  *
- * Uses fire-and-forget additive updates with deep merge.
+ * Uses additive updates with deep merge.
+ * Unlike other updates, this awaits completion to ensure status is visible
+ * for workflow completion detection.
  */
-export function updateLogStatus(
+export async function updateLogStatus(
   client: ArkeClient,
   logFileId: string,
   status: 'running' | 'done' | 'error',
   options?: UpdateLogStatusOptions
-): void {
+): Promise<void> {
   const { logError, messages } = options ?? {};
   const completedAt = new Date().toISOString();
 
@@ -261,12 +263,17 @@ export function updateLogStatus(
     logDataUpdate.messages = messages;
   }
 
-  queueAdditiveUpdates(client, [{
-    entity_id: logFileId,
-    properties: {
-      status, // Top-level for easy querying
-      log_data: logDataUpdate,
+  // Await the status update - this ensures status is visible for completion detection
+  await client.api.POST('/updates/additive', {
+    body: {
+      updates: [{
+        entity_id: logFileId,
+        properties: {
+          status, // Top-level for easy querying
+          log_data: logDataUpdate,
+        },
+        note: `Update log status to ${status}`,
+      }],
     },
-    note: `Update log status to ${status}`,
-  }]);
+  });
 }
