@@ -85,6 +85,25 @@ export {
 export { ensureCollection } from './collection';
 
 // ============================================================================
+// Workspace Utilities (SDK + filesystem)
+// ============================================================================
+
+export type {
+  WorkspaceConfig,
+  WorkspaceNetworkConfig,
+  WorkspaceConfigResult,
+} from './workspace';
+
+export {
+  WORKSPACE_CONFIG_FILENAME,
+  readWorkspaceConfig,
+  writeWorkspaceConfig,
+  findWorkspaceConfig,
+  resolveWorkspaceCollection,
+  createDefaultWorkspaceConfig,
+} from './workspace';
+
+// ============================================================================
 // Klados Registration (SDK)
 // ============================================================================
 
