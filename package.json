@@ -1,6 +1,6 @@
 {
   "name": "@arke-institute/rhiza",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Workflow protocol for Arke - cascading handoff pattern for distributed actions",
   "type": "module",
   "main": "./dist/index.js",

@@ -101,6 +101,7 @@ export {
   findWorkspaceConfig,
   resolveWorkspaceCollection,
   createDefaultWorkspaceConfig,
+  migrateKladosToCollection,
 } from './workspace';
 
 // ============================================================================

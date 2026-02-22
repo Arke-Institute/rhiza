@@ -242,3 +242,59 @@ export function createDefaultWorkspaceConfig(label: string): WorkspaceConfig {
     },
   };
 }
+
+// ============================================================================
+// Collection Migration
+// ============================================================================
+
+/**
+ * Migrate a klados to a different collection.
+ *
+ * Updates the klados entity to belong to the new collection.
+ * Use this with --migrate-collection flag to move existing kladoi
+ * into the workspace collection.
+ *
+ * @param client - Authenticated Arke client
+ * @param kladosId - ID of the klados to migrate
+ * @param newCollectionId - Target collection ID
+ * @returns Whether the migration was performed
+ */
+export async function migrateKladosToCollection(
+  client: ArkeClient,
+  kladosId: string,
+  currentCollectionId: string,
+  newCollectionId: string
+): Promise<{ migrated: boolean }> {
+  // Skip if already in the target collection
+  if (currentCollectionId === newCollectionId) {
+    return { migrated: false };
+  }
+
+  // Get current tip for CAS
+  const { data: tipData, error: tipError } = await client.api.GET(
+    '/entities/{id}/tip',
+    {
+      params: { path: { id: kladosId } },
+    }
+  );
+
+  if (tipError || !tipData) {
+    throw new Error(`Failed to get entity tip: ${tipError?.error || 'Unknown error'}`);
+  }
+
+  // Update klados with new collection
+  const { error: updateError } = await client.api.PUT('/kladoi/{id}', {
+    params: { path: { id: kladosId } },
+    body: {
+      expect_tip: tipData.cid,
+      collection: newCollectionId,
+    },
+  });
+
+  if (updateError) {
+    throw new Error(`Failed to migrate klados to collection: ${updateError.error || 'Unknown error'}`);
+  }
+
+  console.log(`  Migrated klados ${kladosId} to collection ${newCollectionId}`);
+  return { migrated: true };
+}
