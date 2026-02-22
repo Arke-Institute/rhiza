@@ -25,17 +25,23 @@ const DEFAULT_COLLECTION_ROLES = {
   ],
 };
 
+interface CollectionRoles {
+  public?: string[];
+  viewer?: string[];
+  editor?: string[];
+  owner?: string[];
+}
+
 interface CollectionResponse {
   id: string;
   cid?: string;
   type?: string;
-  properties?: Record<string, unknown>;
-  roles?: {
-    public?: string[];
-    viewer?: string[];
-    editor?: string[];
-    owner?: string[];
+  properties?: {
+    roles?: CollectionRoles;
+    [key: string]: unknown;
   };
+  // Roles may be at top level or in properties depending on API version
+  roles?: CollectionRoles;
 }
 
 /**
@@ -67,8 +73,9 @@ export async function ensureCollection(
     }
 
     // Check if public role has invoke permission
+    // Roles may be at top level or nested in properties depending on API response
     const collection = data as CollectionResponse;
-    const publicRoles = collection.roles?.public;
+    const publicRoles = collection.roles?.public ?? collection.properties?.roles?.public;
     const hasInvoke = Array.isArray(publicRoles) &&
       (publicRoles.includes('*:invoke') || publicRoles.includes('klados:invoke'));
 
