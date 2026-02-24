@@ -231,6 +231,8 @@ export interface UpdateLogStatusOptions {
   logError?: LogError;
   /** Messages to append to the log */
   messages?: LogMessage[];
+  /** Output entity IDs produced by this job */
+  outputs?: string[];
 }
 
 /**
@@ -245,7 +247,7 @@ export async function updateLogStatus(
   status: 'running' | 'done' | 'error',
   options?: UpdateLogStatusOptions
 ): Promise<void> {
-  const { logError, messages } = options ?? {};
+  const { logError, messages, outputs } = options ?? {};
   const completedAt = new Date().toISOString();
 
   // Build the nested property update
@@ -256,6 +258,10 @@ export async function updateLogStatus(
 
   if (logError) {
     entryUpdate.error = logError;
+  }
+
+  if (outputs && outputs.length > 0) {
+    entryUpdate.outputs = outputs;
   }
 
   const logDataUpdate: Record<string, unknown> = {
