@@ -61,13 +61,6 @@ export interface WriteLogOptions {
   /** Agent info */
   agentId: string;
   agentVersion: string;
-
-  /**
-   * Link input entities to this log via has_processing_log relationship.
-   * Best-effort - failures are logged but don't fail the job.
-   * @default false
-   */
-  linkEntitiesToLogs?: boolean;
 }
 
 /**
@@ -194,36 +187,9 @@ export async function writeKladosLog(
     }
   }
 
-  // 6. Link input entities to this log (if enabled)
-  // Fire-and-forget - don't fail job if this fails (e.g., missing entity:update permission)
-  if (options.linkEntitiesToLogs) {
-    const inputEntityIds: string[] = [];
-
-    if (entry.received.target_entity) {
-      inputEntityIds.push(entry.received.target_entity);
-    }
-    if (entry.received.target_entities?.length) {
-      inputEntityIds.push(...entry.received.target_entities);
-    }
-
-    if (inputEntityIds.length > 0) {
-      client.api.POST('/updates/additive', {
-        body: {
-          updates: inputEntityIds.map(entityId => ({
-            entity_id: entityId,
-            relationships_add: [{
-              predicate: 'has_processing_log',
-              peer: logEntityId,
-              peer_type: 'klados_log',
-            }],
-            note: 'Link input entity to processing log',
-          })),
-        },
-      }).catch((err) => {
-        console.warn('[rhiza] Failed to link input entities to log:', err.message || err);
-      });
-    }
-  }
+  // NOTE: Input entity linking (has_processing_log) is done in updateLogStatus,
+  // AFTER the job completes. This avoids race conditions where our relationship
+  // addition changes the entity tip before the worker's CAS update.
 
   return { logId: entry.id, fileId: logEntityId };
 }
@@ -272,7 +238,15 @@ export interface UpdateLogStatusOptions {
   /** Output entity IDs produced by this job */
   outputs?: string[];
   /**
-   * Link output entities to this log via has_creation_log relationship.
+   * Input entity IDs that were processed (for has_processing_log).
+   * Only used when linkEntitiesToLogs is true.
+   */
+  inputEntityIds?: string[];
+  /**
+   * Link entities to this log via relationships:
+   * - has_processing_log: input entities → log
+   * - has_creation_log: output entities → log
+   *
    * Best-effort - failures are logged but don't fail the job.
    * @default false
    */
@@ -291,7 +265,7 @@ export async function updateLogStatus(
   status: 'running' | 'done' | 'error',
   options?: UpdateLogStatusOptions
 ): Promise<void> {
-  const { logError, messages, outputs } = options ?? {};
+  const { logError, messages, outputs, inputEntityIds } = options ?? {};
   const completedAt = new Date().toISOString();
 
   // Build the nested property update
@@ -329,6 +303,26 @@ export async function updateLogStatus(
       }],
     },
   });
+
+  // Link input entities to this log (if enabled)
+  // Done here (after job completes) to avoid race conditions with worker's CAS updates
+  if (options?.linkEntitiesToLogs && inputEntityIds && inputEntityIds.length > 0) {
+    client.api.POST('/updates/additive', {
+      body: {
+        updates: inputEntityIds.map(entityId => ({
+          entity_id: entityId,
+          relationships_add: [{
+            predicate: 'has_processing_log',
+            peer: logFileId,
+            peer_type: 'klados_log',
+          }],
+          note: 'Link input entity to processing log',
+        })),
+      },
+    }).catch((err) => {
+      console.warn('[rhiza] Failed to link input entities to log:', err.message || err);
+    });
+  }
 
   // Link output entities to this log (if enabled)
   // Fire-and-forget - don't fail job if this fails (e.g., missing entity:update permission)

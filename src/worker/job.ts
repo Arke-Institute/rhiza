@@ -250,6 +250,8 @@ export class KladosJob {
 
     // Write initial log entry
     // Use relationship updater service for fire-and-forget parent log updates
+    // NOTE: Entity linking (has_processing_log, has_creation_log) happens in complete(),
+    // AFTER the job finishes, to avoid race conditions with worker's CAS updates.
     const { fileId } = await writeKladosLog({
       client: this.client,
       jobCollectionId: this.request.job_collection,
@@ -257,7 +259,6 @@ export class KladosJob {
       messages: this.log.getMessages(),
       agentId: this.config.agentId,
       agentVersion: this.config.agentVersion,
-      linkEntitiesToLogs: this.config.linkEntitiesToLogs,
     });
 
     this.logFileId = fileId;
@@ -351,13 +352,23 @@ export class KladosJob {
     this.log.success('Job completed');
     this.state = 'completed';
 
-    // Mark log as done with final messages and link outputs if enabled
+    // Mark log as done with final messages and link entities if enabled
     // Extract entity IDs from outputs (handles both string[] and OutputItem[])
     const outputIds = outputs.map(o => typeof o === 'string' ? o : o.entity_id);
+
+    // Build input entity IDs for linking
+    const inputEntityIds: string[] = [];
+    if (this.request.target_entity) {
+      inputEntityIds.push(this.request.target_entity);
+    }
+    if (this.request.target_entities?.length) {
+      inputEntityIds.push(...this.request.target_entities);
+    }
 
     await updateLogStatus(this.client, this.logFileId, 'done', {
       messages: this.log.getMessages(),
       outputs: outputIds.length > 0 ? outputIds : undefined,
+      inputEntityIds: inputEntityIds.length > 0 ? inputEntityIds : undefined,
       linkEntitiesToLogs: this.config.linkEntitiesToLogs,
     });
 
