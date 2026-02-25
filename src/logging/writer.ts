@@ -306,41 +306,47 @@ export async function updateLogStatus(
 
   // Link input entities to this log (if enabled)
   // Done here (after job completes) to avoid race conditions with worker's CAS updates
+  // IMPORTANT: Must await to ensure completion before worker terminates
   if (options?.linkEntitiesToLogs && inputEntityIds && inputEntityIds.length > 0) {
-    client.api.POST('/updates/additive', {
-      body: {
-        updates: inputEntityIds.map(entityId => ({
-          entity_id: entityId,
-          relationships_add: [{
-            predicate: 'has_processing_log',
-            peer: logFileId,
-            peer_type: 'klados_log',
-          }],
-          note: 'Link input entity to processing log',
-        })),
-      },
-    }).catch((err) => {
-      console.warn('[rhiza] Failed to link input entities to log:', err.message || err);
-    });
+    try {
+      await client.api.POST('/updates/additive', {
+        body: {
+          updates: inputEntityIds.map(entityId => ({
+            entity_id: entityId,
+            relationships_add: [{
+              predicate: 'has_processing_log',
+              peer: logFileId,
+              peer_type: 'klados_log',
+            }],
+            note: 'Link input entity to processing log',
+          })),
+        },
+      });
+    } catch (err) {
+      console.warn('[rhiza] Failed to link input entities to log:', (err as Error).message || err);
+    }
   }
 
   // Link output entities to this log (if enabled)
-  // Fire-and-forget - don't fail job if this fails (e.g., missing entity:update permission)
+  // Best-effort - don't fail job if this fails (e.g., missing entity:update permission)
+  // IMPORTANT: Must await to ensure completion before worker terminates
   if (options?.linkEntitiesToLogs && outputs && outputs.length > 0) {
-    client.api.POST('/updates/additive', {
-      body: {
-        updates: outputs.map(entityId => ({
-          entity_id: entityId,
-          relationships_add: [{
-            predicate: 'has_creation_log',
-            peer: logFileId,
-            peer_type: 'klados_log',
-          }],
-          note: 'Link output entity to creation log',
-        })),
-      },
-    }).catch((err) => {
-      console.warn('[rhiza] Failed to link output entities to log:', err.message || err);
-    });
+    try {
+      await client.api.POST('/updates/additive', {
+        body: {
+          updates: outputs.map(entityId => ({
+            entity_id: entityId,
+            relationships_add: [{
+              predicate: 'has_creation_log',
+              peer: logFileId,
+              peer_type: 'klados_log',
+            }],
+            note: 'Link output entity to creation log',
+          })),
+        },
+      });
+    } catch (err) {
+      console.warn('[rhiza] Failed to link output entities to log:', (err as Error).message || err);
+    }
   }
 }
