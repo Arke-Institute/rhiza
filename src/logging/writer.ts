@@ -61,6 +61,13 @@ export interface WriteLogOptions {
   /** Agent info */
   agentId: string;
   agentVersion: string;
+
+  /**
+   * Link input entities to this log via has_processing_log relationship.
+   * Best-effort - failures are logged but don't fail the job.
+   * @default false
+   */
+  linkEntitiesToLogs?: boolean;
 }
 
 /**
@@ -187,6 +194,37 @@ export async function writeKladosLog(
     }
   }
 
+  // 6. Link input entities to this log (if enabled)
+  // Fire-and-forget - don't fail job if this fails (e.g., missing entity:update permission)
+  if (options.linkEntitiesToLogs) {
+    const inputEntityIds: string[] = [];
+
+    if (entry.received.target_entity) {
+      inputEntityIds.push(entry.received.target_entity);
+    }
+    if (entry.received.target_entities?.length) {
+      inputEntityIds.push(...entry.received.target_entities);
+    }
+
+    if (inputEntityIds.length > 0) {
+      client.api.POST('/updates/additive', {
+        body: {
+          updates: inputEntityIds.map(entityId => ({
+            entity_id: entityId,
+            relationships_add: [{
+              predicate: 'has_processing_log',
+              peer: logEntityId,
+              peer_type: 'klados_log',
+            }],
+            note: 'Link input entity to processing log',
+          })),
+        },
+      }).catch((err) => {
+        console.warn('[rhiza] Failed to link input entities to log:', err.message || err);
+      });
+    }
+  }
+
   return { logId: entry.id, fileId: logEntityId };
 }
 
@@ -233,6 +271,12 @@ export interface UpdateLogStatusOptions {
   messages?: LogMessage[];
   /** Output entity IDs produced by this job */
   outputs?: string[];
+  /**
+   * Link output entities to this log via has_creation_log relationship.
+   * Best-effort - failures are logged but don't fail the job.
+   * @default false
+   */
+  linkEntitiesToLogs?: boolean;
 }
 
 /**
@@ -285,4 +329,24 @@ export async function updateLogStatus(
       }],
     },
   });
+
+  // Link output entities to this log (if enabled)
+  // Fire-and-forget - don't fail job if this fails (e.g., missing entity:update permission)
+  if (options?.linkEntitiesToLogs && outputs && outputs.length > 0) {
+    client.api.POST('/updates/additive', {
+      body: {
+        updates: outputs.map(entityId => ({
+          entity_id: entityId,
+          relationships_add: [{
+            predicate: 'has_creation_log',
+            peer: logFileId,
+            peer_type: 'klados_log',
+          }],
+          note: 'Link output entity to creation log',
+        })),
+      },
+    }).catch((err) => {
+      console.warn('[rhiza] Failed to link output entities to log:', err.message || err);
+    });
+  }
 }

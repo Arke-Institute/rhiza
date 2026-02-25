@@ -44,6 +44,18 @@ export interface KladosJobConfig {
    * - JWT token from Supabase auth
    */
   authToken?: string;
+
+  /**
+   * Link entities to their processing logs via relationships.
+   * When enabled, creates:
+   * - has_processing_log: input entity → log (when log is written)
+   * - has_creation_log: output entity → log (when job completes with outputs)
+   *
+   * Requires `entity:update` permission on target_collection.
+   * Linking is best-effort - failures are logged but don't fail the job.
+   * @default false
+   */
+  linkEntitiesToLogs?: boolean;
 }
 
 /**
@@ -245,6 +257,7 @@ export class KladosJob {
       messages: this.log.getMessages(),
       agentId: this.config.agentId,
       agentVersion: this.config.agentVersion,
+      linkEntitiesToLogs: this.config.linkEntitiesToLogs,
     });
 
     this.logFileId = fileId;
@@ -338,9 +351,14 @@ export class KladosJob {
     this.log.success('Job completed');
     this.state = 'completed';
 
-    // Mark log as done with final messages
+    // Mark log as done with final messages and link outputs if enabled
+    // Extract entity IDs from outputs (handles both string[] and OutputItem[])
+    const outputIds = outputs.map(o => typeof o === 'string' ? o : o.entity_id);
+
     await updateLogStatus(this.client, this.logFileId, 'done', {
       messages: this.log.getMessages(),
+      outputs: outputIds.length > 0 ? outputIds : undefined,
+      linkEntitiesToLogs: this.config.linkEntitiesToLogs,
     });
 
     return {
