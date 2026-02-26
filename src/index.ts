@@ -187,6 +187,8 @@ export {
   KladosJob,
   type KladosJobConfig,
   type KladosJobResult,
+  getKladosConfig,
+  type NetworkEnv,
   KladosErrorCode,
   type KladosErrorCodeType,
   type KladosError,

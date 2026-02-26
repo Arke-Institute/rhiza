@@ -11,6 +11,11 @@ export {
 } from './job';
 
 export {
+  getKladosConfig,
+  type NetworkEnv,
+} from './config';
+
+export {
   KladosErrorCode,
   type KladosErrorCodeType,
   type KladosError,

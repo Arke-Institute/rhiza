@@ -126,9 +126,13 @@ Tests are in `src/__tests__/unit/`. Run with `npm test`.
 
 The job lifecycle is: `accepted` → `started` → `completed`/`failed`
 - `accept()` - Creates job, client, logger, generates log ID
-- `start()` - Writes initial log entry, fetches rhiza flow
-- `complete()` - Executes handoff, updates log
+- `start()` - Writes initial log entry, fetches rhiza flow, adds `first_log` relationship if no parent
+- `complete()` - Executes handoff, adds `final_output` relationship if terminal (`done`), updates log
 - `fail()` - Updates log status AND batch slot (if applicable)
+
+**Job Collection Relationships:**
+- `first_log` - Added when log has no parent (entry point)
+- `final_output` - Added when handoff is `done` or no `then` spec (terminal node)
 
 ## Dependencies
 

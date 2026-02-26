@@ -348,6 +348,31 @@ export class KladosJob {
       await updateLogWithHandoffs(this.client, this.logFileId, handoffs);
     }
 
+    // Check if this is a terminal node in the workflow (final output)
+    // Terminal means: explicit done OR no then spec for this step
+    const isTerminal = this.request.rhiza && (
+      !handoffResult || // No then spec = implicit done
+      handoffResult.action === 'done' // Explicit done
+    );
+
+    // Add final_output relationship from job collection to this log
+    // This enables O(1) discovery of workflow outputs without tree traversal
+    if (isTerminal) {
+      await this.client.api.POST('/updates/additive', {
+        body: {
+          updates: [{
+            entity_id: this.request.job_collection,
+            relationships_add: [{
+              predicate: 'final_output',
+              peer: this.logFileId!,
+              peer_type: 'klados_log',
+            }],
+            note: 'Mark log as final output (terminal workflow node)',
+          }],
+        },
+      });
+    }
+
     // Add completion message before finalizing
     this.log.success('Job completed');
     this.state = 'completed';
