@@ -132,7 +132,8 @@ The job lifecycle is: `accepted` → `started` → `completed`/`failed`
 
 **Job Collection Relationships:**
 - `first_log` - Added when log has no parent (entry point)
-- `final_output` - Added when handoff is `done` or no `then` spec (terminal node)
+- `final_output` - Added when handoff is `done` or no `then` spec (successful terminal)
+- `final_error` - Added when job fails (failed terminal - no handoff will happen)
 
 ## Dependencies
 

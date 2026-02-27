@@ -432,6 +432,24 @@ export class KladosJob {
       messages: this.log.getMessages(),
     });
 
+    // Add final_error relationship from job collection to this log
+    // Any failure in a workflow is terminal for this branch (no handoff will happen)
+    if (this.request.rhiza) {
+      await this.client.api.POST('/updates/additive', {
+        body: {
+          updates: [{
+            entity_id: this.request.job_collection,
+            relationships_add: [{
+              predicate: 'final_error',
+              peer: this.logFileId,
+              peer_type: 'klados_log',
+            }],
+            note: 'Mark log as final error (failed workflow node)',
+          }],
+        },
+      });
+    }
+
     this.state = 'failed';
   }
 
