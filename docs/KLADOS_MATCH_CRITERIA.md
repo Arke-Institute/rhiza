@@ -340,6 +340,73 @@ When discovering tools for an entity:
 
 This means workflows automatically match the same entities as their starting point.
 
+### Creating a Discoverable Rhiza
+
+To create a rhiza that appears in discovery results:
+
+```
+POST /rhizai
+Authorization: Bearer <token>
+
+{
+  "label": "PDF OCR Pipeline",
+  "description": "Converts PDF to images and extracts text via OCR",
+  "entry": "convert",
+  "flow": {
+    "convert": {
+      "klados": { "id": "01KLADOS_PDF_JPEG", "type": "klados" },
+      "then": { "scatter": "ocr" }
+    },
+    "ocr": {
+      "klados": { "id": "01KLADOS_OCR_WORKER", "type": "klados" },
+      "then": { "done": true }
+    }
+  },
+  "collection": "01COLLECTION_TOOLS"
+}
+```
+
+The rhiza's discoverability is determined by the entry klados (`01KLADOS_PDF_JPEG`). If that klados has:
+
+```json
+{
+  "match": {
+    "path": "properties.content",
+    "any": { "path": "content_type", "equals": "application/pdf" }
+  }
+}
+```
+
+Then the rhiza will appear in discovery results for any PDF file entity.
+
+### Rhiza in Discovery Response
+
+When a rhiza matches, it includes an `entry_klados_id` field:
+
+```json
+{
+  "matches": [
+    {
+      "id": "01KLADOS_PDF_JPEG",
+      "type": "klados",
+      "label": "PDF to JPEG",
+      "specificity": 1
+    },
+    {
+      "id": "01RHIZA_PDF_OCR_PIPELINE",
+      "type": "rhiza",
+      "label": "PDF OCR Pipeline",
+      "description": "Converts PDF to images and extracts text via OCR",
+      "specificity": 1,
+      "entry_klados_id": "01KLADOS_PDF_JPEG"
+    }
+  ],
+  "total_evaluated": 12
+}
+```
+
+The `entry_klados_id` tells you which klados's match criteria was used.
+
 ## Best Practices
 
 ### Be Specific
@@ -393,10 +460,10 @@ Think about what happens when properties are missing:
 
 ## Discovery API
 
-The discovery endpoint evaluates match criteria:
+The discovery endpoint evaluates match criteria and returns both kladoi and rhiza:
 
 ```
-POST /collections/{collection_id}/kladoi/discover
+POST /collections/{collection_id}/tools/discover
 {
   "entity_id": "01JFILE456..."
 }
@@ -409,7 +476,13 @@ Or with inline entity data:
   "entity": {
     "type": "file",
     "properties": {
-      "content_type": "application/pdf"
+      "content": {
+        "document.pdf": {
+          "content_type": "application/pdf",
+          "cid": "bafkrei...",
+          "size": 250000
+        }
+      }
     }
   }
 }
@@ -425,7 +498,15 @@ Response:
       "type": "klados",
       "label": "PDF to JPEG",
       "description": "Converts PDF pages to JPEG images",
-      "specificity": 2
+      "specificity": 1
+    },
+    {
+      "id": "01RHIZA_PDF_PIPELINE",
+      "type": "rhiza",
+      "label": "PDF Processing Pipeline",
+      "description": "Full PDF processing with OCR",
+      "specificity": 1,
+      "entry_klados_id": "01KLADOS_PDF_JPEG"
     },
     {
       "id": "01KLADOS_DESCRIBE",
