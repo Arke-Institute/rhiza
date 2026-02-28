@@ -29,6 +29,8 @@ async function createKladosEntity(
       accepts: config.accepts,
       produces: config.produces,
       collection: collectionId,
+      // Include match criteria for discovery
+      ...(config.match ? { match: config.match } : {}),
     },
   });
 
@@ -70,6 +72,8 @@ async function updateKladosEntity(
       actions_required: config.actions_required,
       accepts: config.accepts,
       produces: config.produces,
+      // Include match criteria for discovery
+      ...(config.match ? { match: config.match } : {}),
     },
   });
 

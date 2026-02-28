@@ -4,6 +4,45 @@
 
 import type { Network, KeyStore } from '../types';
 
+/**
+ * Match criteria for klados discovery.
+ * See arke_v1/docs/architecture/KLADOS_DISCOVERY.md for full documentation.
+ */
+export type MatchCriteria =
+  | { always: true }
+  | { never: true }
+  | { and: MatchCriteria[] }
+  | { or: MatchCriteria[] }
+  | { not: MatchCriteria }
+  | PropertyCondition;
+
+export interface PropertyCondition {
+  /** JSON path into the entity (e.g., "type", "properties.content_type") */
+  path: string;
+  equals?: unknown;
+  not_equals?: unknown;
+  in?: unknown[];
+  not_in?: unknown[];
+  exists?: boolean;
+  gt?: number;
+  gte?: number;
+  lt?: number;
+  lte?: number;
+  matches?: string;
+  starts_with?: string;
+  contains?: string;
+  /**
+   * Matches if ANY entry in the map/array at this path satisfies the nested criteria.
+   * For objects, iterates over values. For arrays, iterates over elements.
+   */
+  any?: MatchCriteria;
+  /**
+   * Matches if ALL entries in the map/array at this path satisfy the nested criteria.
+   * Empty collections return true (vacuous truth).
+   */
+  all?: MatchCriteria;
+}
+
 /** Configuration for klados registration (typically from agent.json) */
 export interface KladosConfig {
   /** Human-readable name */
@@ -28,6 +67,12 @@ export interface KladosConfig {
     /** Output cardinality */
     cardinality: 'one' | 'many';
   };
+  /**
+   * Match criteria for automatic discovery.
+   * Defines when this klados applies to a given entity.
+   * @see arke_v1/docs/architecture/KLADOS_DISCOVERY.md
+   */
+  match?: MatchCriteria;
 }
 
 /** Options for klados sync */
