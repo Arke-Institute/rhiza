@@ -148,6 +148,11 @@ export interface KladosLogEntry {
           message: string;
           retryable: boolean;
         };
+        /** Produced entity IDs (if done) */
+        produced?: {
+          entity_ids: string[];
+          metadata?: Record<string, unknown>;
+        };
       };
       messages: LogMessage[];
     };
@@ -233,6 +238,12 @@ export interface WorkflowLogTree {
   }>;
   /** Whether all expected children have been discovered */
   allChildrenDiscovered: boolean;
+  /**
+   * Final output entity IDs from all leaf nodes.
+   * Extracted from each leaf's `produced.entity_ids` field.
+   * Empty array if workflow is not complete or no outputs were produced.
+   */
+  outputs: string[];
 }
 
 /**

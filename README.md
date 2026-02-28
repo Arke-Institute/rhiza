@@ -89,6 +89,7 @@ if (!result.valid) {
 ### Guides
 
 - **[Klados Worker Guide](docs/klados-worker-guide.md)** - Building workers with KladosJob
+- **[Klados Match Criteria](docs/KLADOS_MATCH_CRITERIA.md)** - Defining when your klados applies to an entity
 
 ### Design Documents
 

@@ -3,7 +3,7 @@
  */
 
 // Types
-export type { KladosConfig, KladosSyncOptions } from './types';
+export type { KladosConfig, KladosSyncOptions, MatchCriteria, PropertyCondition } from './types';
 
 // Key management
 export {

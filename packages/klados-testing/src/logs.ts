@@ -329,6 +329,55 @@ function collectLeaves(node: LogTreeNode): LogTreeNode[] {
 }
 
 /**
+ * Extract output entity IDs from leaf nodes
+ *
+ * Collects all `produced.entity_ids` from terminal leaf nodes.
+ * Only includes outputs from successfully completed nodes (status: 'done').
+ *
+ * @param leaves - Leaf nodes from the workflow tree
+ * @returns Array of output entity IDs
+ */
+function extractOutputsFromLeaves(leaves: LogTreeNode[]): string[] {
+  const outputs: string[] = [];
+  for (const leaf of leaves) {
+    // Only collect outputs from successful completions
+    if (leaf.log.properties.status !== 'done') {
+      continue;
+    }
+    const produced = leaf.log.properties.log_data.entry.produced;
+    if (produced?.entity_ids) {
+      outputs.push(...produced.entity_ids);
+    }
+  }
+  return outputs;
+}
+
+/**
+ * Extract all output entity IDs from a completed workflow tree
+ *
+ * This is a convenience function for getting final outputs from a workflow.
+ * Use this after `waitForWorkflowTree` completes to get all produced entities.
+ *
+ * @example
+ * ```typescript
+ * const tree = await waitForWorkflowTree(jobCollectionId);
+ * if (tree.isComplete && !tree.hasErrors) {
+ *   const outputs = extractWorkflowOutputs(tree);
+ *   console.log('Produced entities:', outputs);
+ * }
+ * ```
+ *
+ * @param tree - Completed workflow log tree
+ * @returns Array of output entity IDs from all leaf nodes
+ */
+export function extractWorkflowOutputs(tree: WorkflowLogTree): string[] {
+  if (!tree.isComplete) {
+    return [];
+  }
+  return extractOutputsFromLeaves(tree.leaves);
+}
+
+/**
  * Check if all expected children have been discovered in the tree
  *
  * Returns false if:
@@ -401,6 +450,7 @@ export async function buildWorkflowTree(
       leaves: [],
       errors: [],
       allChildrenDiscovered: false,
+      outputs: [],
     };
   }
 
@@ -416,6 +466,7 @@ export async function buildWorkflowTree(
       leaves: [],
       errors: [],
       allChildrenDiscovered: false,
+      outputs: [],
     };
   }
 
@@ -444,6 +495,9 @@ export async function buildWorkflowTree(
     }
   }
 
+  // Extract outputs from leaf nodes (only if complete)
+  const outputs = isComplete ? extractOutputsFromLeaves(leaves) : [];
+
   return {
     root,
     logs: logsMap,
@@ -452,6 +506,7 @@ export async function buildWorkflowTree(
     leaves,
     errors,
     allChildrenDiscovered,
+    outputs,
   };
 }
 
@@ -508,6 +563,7 @@ export async function waitForWorkflowTree(
     leaves: [],
     errors: [],
     allChildrenDiscovered: false,
+    outputs: [],
   };
 
   // Track stability: require the same log count for 2 consecutive polls

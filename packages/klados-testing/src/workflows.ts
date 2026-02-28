@@ -318,18 +318,27 @@ export async function waitForWorkflowCompletion(
           (log) => log.properties.status === 'error'
         );
 
-        // Get final outputs from the last step (by completion time)
-        const sortedLogs = [...logs].sort((a, b) => {
-          const aTime = a.properties.log_data.entry.completed_at ?? '';
-          const bTime = b.properties.log_data.entry.completed_at ?? '';
-          return aTime.localeCompare(bTime);
-        });
-
-        const lastLog = sortedLogs[sortedLogs.length - 1];
-        const finalOutputs =
-          lastLog?.properties.log_data.entry.handoffs
-            ?.filter((h) => h.type === 'complete' || h.type === 'invoke')
-            .flatMap(() => []) ?? [];
+        // Extract final outputs from all successful leaf logs.
+        // A leaf log is one that completed successfully and has no handoffs
+        // to other steps (handoffs array is empty, undefined, or only 'none'/'complete').
+        const finalOutputs: string[] = [];
+        for (const log of logs) {
+          if (log.properties.status !== 'done') {
+            continue;
+          }
+          const handoffs = log.properties.log_data.entry.handoffs ?? [];
+          // Check if this is a leaf (no invoke/pass/scatter/gather handoffs)
+          const hasOutgoingHandoff = handoffs.some(
+            (h) => h.type === 'invoke' || h.type === 'pass' || h.type === 'scatter' || h.type === 'gather'
+          );
+          if (!hasOutgoingHandoff) {
+            // This is a leaf - collect its outputs
+            const produced = log.properties.log_data.entry.produced;
+            if (produced?.entity_ids) {
+              finalOutputs.push(...produced.entity_ids);
+            }
+          }
+        }
 
         return {
           status: hasError ? 'error' : 'done',

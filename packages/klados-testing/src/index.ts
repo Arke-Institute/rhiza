@@ -78,6 +78,7 @@ export {
   getLogChildren,
   buildWorkflowTree,
   waitForWorkflowTree,
+  extractWorkflowOutputs,
 } from './logs.js';
 
 // Klados invocation
