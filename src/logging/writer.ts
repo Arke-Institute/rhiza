@@ -101,12 +101,16 @@ export async function writeKladosLog(
     messages,
   };
 
+  // Generate a human-readable label for the log
+  const logLabel = `${entry.klados_id} - ${entry.job_id}`;
+
   // 1. Create entity with log data
   const { data: logEntity, error: createError } = await client.api.POST('/entities', {
     body: {
       type: 'klados_log',
       collection: jobCollectionId,
       properties: {
+        label: logLabel,
         rhiza_id: entry.rhiza_id,
         klados_id: entry.klados_id,
         job_id: entry.job_id,

@@ -12,6 +12,9 @@ export interface BatchEntity {
 }
 
 export interface BatchProperties {
+  /** Human-readable label for the batch */
+  label: string;
+
   /** Rhiza entity ID */
   rhiza_id: string;
 

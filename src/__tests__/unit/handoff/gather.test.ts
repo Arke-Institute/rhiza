@@ -28,6 +28,7 @@ describe('Gather', () => {
       id: 'batch-test',
       type: 'batch',
       properties: {
+        label: 'Scatter: test_producer -> worker (test)',
         rhiza_id: 'II01rhiza_test',
         job_id: 'job-root',
         source_klados: 'II01klados_producer',

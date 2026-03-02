@@ -120,8 +120,12 @@ export async function createScatterBatch(
     skipInvocations = false,
   } = options;
 
+  // Generate a human-readable label for the batch
+  const batchLabel = `Scatter: ${sourceKladosId} -> ${targetStepName} (${outputs.length} items)`;
+
   // 1. Create batch entity
   const batchProperties: BatchProperties = {
+    label: batchLabel,
     rhiza_id: rhizaId,
     job_id: jobId,
     source_klados: sourceKladosId,
