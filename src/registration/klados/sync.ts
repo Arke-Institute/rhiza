@@ -110,9 +110,11 @@ export async function syncKlados(
   options: KladosSyncOptions
 ): Promise<SyncResult<KladosRegistrationState> | DryRunResult> {
   const {
+    network,
     collectionId,
     collectionLabel = 'Klados Workers',
     keyStore,
+    secretName = network === 'test' ? 'ARKE_AGENT_KEY_TEST' : 'ARKE_AGENT_KEY_MAIN',
     dryRun = false,
     onDeploy,
     onWaitForHealth,
@@ -192,7 +194,7 @@ export async function syncKlados(
 
       // Step 7: Create and store API key
       const apiKey = await createApiKey(client, kladosId, 'Primary API Key');
-      await keyStore.set('ARKE_AGENT_KEY', apiKey.key);
+      await keyStore.set(secretName, apiKey.key);
 
       const now = new Date().toISOString();
       return {

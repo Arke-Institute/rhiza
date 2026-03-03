@@ -91,6 +91,14 @@ export interface KladosSyncOptions {
   keyStore?: KeyStore;
 
   /**
+   * Secret name for the API key in the keyStore.
+   * Defaults to network-specific names:
+   * - 'ARKE_AGENT_KEY_TEST' for test network
+   * - 'ARKE_AGENT_KEY_MAIN' for main network
+   */
+  secretName?: string;
+
+  /**
    * Dry run mode - return what would happen without making changes.
    * When true, returns DryRunResult instead of SyncResult.
    */
