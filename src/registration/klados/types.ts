@@ -60,6 +60,12 @@ export interface KladosSyncOptions {
   dryRun?: boolean;
 
   /**
+   * Force update even if config hash matches state file.
+   * Useful when state file is out of sync with the actual API entity.
+   */
+  force?: boolean;
+
+  /**
    * Called when worker needs to be deployed.
    * This is called after secrets are pushed to keyStore.
    */

@@ -112,6 +112,7 @@ export async function syncKlados(
     keyStore,
     secretName = network === 'test' ? 'ARKE_AGENT_KEY_TEST' : 'ARKE_AGENT_KEY_MAIN',
     dryRun = false,
+    force = false,
     onDeploy,
     onWaitForHealth,
   } = options;
@@ -148,7 +149,7 @@ export async function syncKlados(
       }
     );
 
-    if (changes.length === 0 || state.config_hash === configHash) {
+    if (!force && (changes.length === 0 || state.config_hash === configHash)) {
       return { action: 'unchanged' };
     }
 
@@ -233,7 +234,7 @@ export async function syncKlados(
   // ==========================================================================
 
   // Check if anything changed
-  if (state.config_hash === configHash) {
+  if (!force && state.config_hash === configHash) {
     return {
       action: 'unchanged',
       state,
