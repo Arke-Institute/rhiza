@@ -42,13 +42,20 @@ async function createRhizaEntity(
 
 /**
  * Update an existing rhiza entity.
+ *
+ * Uses a two-step approach to ensure clean flow replacement:
+ * 1. Remove the entire flow property (avoids deep-merge artifacts)
+ * 2. Set all new properties including the new flow
+ *
+ * This is necessary because the Arke API deep-merges properties, so stale
+ * nested keys (e.g., a removed step's `then.scatter`) would persist otherwise.
  */
 async function updateRhizaEntity(
   client: ArkeClient,
   rhizaId: string,
   config: RhizaConfig
 ): Promise<void> {
-  // Get current tip for CAS
+  // Step 1: Get current tip and remove flow entirely
   const { data: tipData, error: tipError } = await client.api.GET(
     '/entities/{id}/tip',
     {
@@ -60,10 +67,23 @@ async function updateRhizaEntity(
     throw new Error(`Failed to get entity tip: ${tipError?.error || 'Unknown error'}`);
   }
 
-  const { error: updateError } = await client.api.PUT('/rhizai/{id}', {
+  const { data: clearData, error: clearError } = await client.api.PUT('/entities/{id}', {
     params: { path: { id: rhizaId } },
     body: {
       expect_tip: tipData.cid,
+      properties_remove: ['flow'],
+    },
+  });
+
+  if (clearError || !clearData) {
+    throw new Error(`Failed to clear flow: ${clearError?.error || 'Unknown error'}`);
+  }
+
+  // Step 2: Set new properties with clean flow (no stale keys to merge with)
+  const { error: updateError } = await client.api.PUT('/rhizai/{id}', {
+    params: { path: { id: rhizaId } },
+    body: {
+      expect_tip: clearData.cid,
       label: config.label,
       version: config.version,
       entry: config.entry,
@@ -98,7 +118,7 @@ export async function syncRhiza(
   state: RhizaRegistrationState | null,
   options: RhizaSyncOptions
 ): Promise<SyncResult<RhizaRegistrationState> | DryRunResult> {
-  const { collectionId, collectionLabel = 'Rhiza Workflows', dryRun = false } = options;
+  const { collectionId, collectionLabel = 'Rhiza Workflows', dryRun = false, force = false } = options;
 
   const configHash = hashConfig(config);
 
@@ -120,7 +140,7 @@ export async function syncRhiza(
     }
 
     // Check for changes
-    if (state.config_hash === configHash) {
+    if (!force && state.config_hash === configHash) {
       return { action: 'unchanged' };
     }
 
@@ -173,7 +193,7 @@ export async function syncRhiza(
   // ==========================================================================
 
   // Check if anything changed
-  if (state.config_hash === configHash) {
+  if (!force && state.config_hash === configHash) {
     return {
       action: 'unchanged',
       state,

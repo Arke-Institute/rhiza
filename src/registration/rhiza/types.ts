@@ -36,4 +36,10 @@ export interface RhizaSyncOptions {
    * When true, returns DryRunResult instead of SyncResult.
    */
   dryRun?: boolean;
+
+  /**
+   * Force update even if config hash matches state file.
+   * Useful when state file is out of sync with the actual API entity.
+   */
+  force?: boolean;
 }
