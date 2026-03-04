@@ -108,7 +108,7 @@ export {
 // Klados Registration (SDK)
 // ============================================================================
 
-export type { KladosConfig, KladosSyncOptions, MatchCriteria, PropertyCondition } from './klados';
+export type { KladosConfig, KladosSyncOptions } from './klados';
 
 export {
   // Sync orchestrator
