@@ -244,6 +244,8 @@ export interface WorkflowLogTree {
    * Empty array if workflow is not complete or no outputs were produced.
    */
   outputs: string[];
+  /** Number of API calls made during this tree build (for diagnostics) */
+  fetchCount: number;
 }
 
 /**

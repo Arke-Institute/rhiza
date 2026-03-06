@@ -2,6 +2,7 @@
  * Klados log utilities for testing
  *
  * Includes tree-based traversal for multi-step workflows and scatter/gather operations.
+ * Uses single-fetch-per-node (1 GET instead of 2) for efficient traversal.
  */
 
 import { apiRequest, sleep } from './client.js';
@@ -122,6 +123,29 @@ export function getLogEntry(log: KladosLogEntry) {
 // Log Tree Traversal
 // =============================================================================
 
+/** Simple concurrency limiter (no external dependencies) */
+function createPool(concurrency: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return {
+    async run<T>(fn: () => Promise<T>): Promise<T> {
+      if (active >= concurrency) {
+        await new Promise<void>((resolve) => queue.push(resolve));
+      }
+      active++;
+      try {
+        return await fn();
+      } finally {
+        active--;
+        if (queue.length > 0) queue.shift()!();
+      }
+    },
+  };
+}
+
+/** Shared concurrency pool for tree traversal (50+ reads are safe per CLIENT_CONCURRENCY.md) */
+const fetchPool = createPool(30);
+
 /**
  * Result of getting log children
  */
@@ -130,6 +154,13 @@ interface LogChildrenResult {
   childIds: string[];
   /** Total count of sent_to relationships (may be more than childIds if some don't exist yet) */
   sentToCount: number;
+}
+
+/**
+ * Extract sent_to child IDs from an entity's relationships
+ */
+function extractChildIds(entity: Entity): string[] {
+  return (entity.relationships?.filter((r) => r.predicate === 'sent_to') ?? []).map((r) => r.peer);
 }
 
 /**
@@ -245,66 +276,117 @@ function getExpectedChildrenCount(log: KladosLogEntry): number {
 }
 
 /**
- * Build a log tree node recursively
+ * Check if a log is in a terminal state (will not change)
+ */
+function isTerminalStatus(log: KladosLogEntry): boolean {
+  return log.properties.status === 'done' || log.properties.status === 'error';
+}
+
+/**
+ * Cache for incremental tree traversal.
+ * Stable subtrees (terminal + all expected children discovered + all children stable)
+ * are reused between polls to avoid redundant API calls.
+ */
+interface TreeCache {
+  /** IDs of nodes whose entire subtree is stable */
+  stableIds: Set<string>;
+  /** All nodes from the previous tree */
+  nodes: Map<string, LogTreeNode>;
+}
+
+/**
+ * Compute cache from a completed tree poll.
+ * Marks nodes as stable if they and all descendants are terminal with all expected children.
+ */
+function computeTreeCache(tree: WorkflowLogTree): TreeCache {
+  const stableIds = new Set<string>();
+  const nodes = new Map<string, LogTreeNode>();
+
+  if (tree.root) {
+    markStableRecursive(tree.root, stableIds, nodes);
+  }
+
+  return { stableIds, nodes };
+}
+
+function markStableRecursive(
+  node: LogTreeNode,
+  stableIds: Set<string>,
+  nodes: Map<string, LogTreeNode>
+): boolean {
+  nodes.set(node.log.id, node);
+
+  if (!node.isTerminal) return false;
+  if (node.expectedChildren < 0) return false;
+  if (node.children.length < node.expectedChildren) return false;
+
+  const childrenStable = node.children.every((child) =>
+    markStableRecursive(child, stableIds, nodes)
+  );
+  if (childrenStable) {
+    stableIds.add(node.log.id);
+  }
+  return childrenStable;
+}
+
+/** Mark all nodes in a subtree as visited (for cache hits) */
+function markVisited(node: LogTreeNode, visited: Set<string>): void {
+  visited.add(node.log.id);
+  for (const child of node.children) {
+    markVisited(child, visited);
+  }
+}
+
+/**
+ * Build a tree node recursively with:
+ * - Single-fetch-per-node (1 GET instead of 2)
+ * - Concurrent child fetching (bounded by fetchPool)
+ * - Incremental caching (stable subtrees reused from previous poll)
  *
- * @param logEntityId - Entity ID of the log
- * @param logsMap - Map to collect all discovered logs
- * @param visited - Set of visited log IDs to prevent cycles
+ * @param logId - Log entity ID
+ * @param visited - Set of visited node IDs (prevents cycles)
+ * @param cache - Optional cache from previous poll
+ * @param fetchCount - Mutable counter for tracking API calls
  */
 async function buildTreeNode(
-  logEntityId: string,
-  logsMap: Map<string, KladosLogEntry>,
-  visited: Set<string>
+  logId: string,
+  visited: Set<string>,
+  cache?: TreeCache,
+  fetchCount?: { value: number }
 ): Promise<LogTreeNode | null> {
-  if (visited.has(logEntityId)) {
-    // Prevent infinite loops on malformed data
-    const existingLog = logsMap.get(logEntityId);
-    if (existingLog) {
-      return {
-        log: existingLog,
-        children: [],
-        isLeaf: true,
-        isTerminal:
-          existingLog.properties.status === 'done' ||
-          existingLog.properties.status === 'error',
-        expectedChildren: 0,
-      };
+  if (visited.has(logId)) return null;
+  visited.add(logId);
+
+  // Use cached subtree if node was previously stable
+  if (cache?.stableIds.has(logId)) {
+    const cached = cache.nodes.get(logId);
+    if (cached) {
+      markVisited(cached, visited);
+      return cached;
     }
-    return null;
   }
 
-  visited.add(logEntityId);
-
-  // Fetch the log entry
-  let log: KladosLogEntry;
+  // Single fetch: get entity with both properties and relationships
+  let entity: Entity;
   try {
-    log = await getKladosLog(logEntityId);
-    logsMap.set(logEntityId, log);
+    entity = await fetchPool.run(() => apiRequest<Entity>('GET', `/entities/${logId}`));
+    if (fetchCount) fetchCount.value++;
   } catch {
-    // Log doesn't exist yet or fetch failed
     return null;
   }
 
-  const isTerminal =
-    log.properties.status === 'done' || log.properties.status === 'error';
+  const log = entity as KladosLogEntry;
+  const childIds = extractChildIds(entity);
 
-  // Find children via sent_to relationships
-  const { childIds } = await getLogChildren(logEntityId);
-
-  // Get expected children count (from log messages or handoff analysis)
+  const isTerminal = isTerminalStatus(log);
   const expectedChildren = getExpectedChildrenCount(log);
 
-  // Recursively build child nodes
-  const children: LogTreeNode[] = [];
-  for (const childId of childIds) {
-    const childNode = await buildTreeNode(childId, logsMap, visited);
-    if (childNode) {
-      children.push(childNode);
-    }
-  }
+  // Fetch children concurrently (bounded by fetchPool)
+  const childResults = await Promise.all(
+    childIds.map((childId) => buildTreeNode(childId, visited, cache, fetchCount))
+  );
+  const children = childResults.filter((c): c is LogTreeNode => c !== null);
 
-  // A node is a leaf if it's terminal AND has no expected children
-  // OR if it has error status (errors stop the branch)
   const isLeaf =
     log.properties.status === 'error' ||
     (isTerminal && expectedChildren === 0);
@@ -411,64 +493,70 @@ function checkAllChildrenDiscovered(node: LogTreeNode): boolean {
 }
 
 /**
+ * Collect all logs from a tree into a flat map
+ */
+function collectLogs(node: LogTreeNode, logsMap: Map<string, KladosLogEntry>): void {
+  logsMap.set(node.log.id, node.log);
+  for (const child of node.children) {
+    collectLogs(child, logsMap);
+  }
+}
+
+/**
  * Build a snapshot of the workflow log tree
  *
- * This traverses the log tree starting from the first_log relationship
- * on the job collection, following incoming received_from relationships
- * to discover all logs in the workflow.
- *
- * @example
- * ```typescript
- * const tree = await buildWorkflowTree(jobCollectionId);
- *
- * if (tree.isComplete) {
- *   console.log('Workflow finished with', tree.logs.size, 'logs');
- *   if (tree.hasErrors) {
- *     console.log('Errors:', tree.errors);
- *   }
- * }
- * ```
+ * Uses recursive DFS with:
+ * - Single-fetch-per-node (1 GET instead of 2)
+ * - Concurrent child fetching (bounded concurrency pool)
+ * - Incremental caching (stable subtrees reused from previous poll)
  *
  * @param jobCollectionId - Job collection ID
- * @returns Current state of the workflow log tree
+ * @param cache - Optional cache from previous poll for incremental updates
+ * @returns Current state of the workflow log tree (includes fetchCount for diagnostics)
  */
 export async function buildWorkflowTree(
-  jobCollectionId: string
+  jobCollectionId: string,
+  cache?: TreeCache,
 ): Promise<WorkflowLogTree> {
-  const logsMap = new Map<string, KladosLogEntry>();
-  const visited = new Set<string>();
-
   // Find root via first_log relationship
   const firstLogId = await getFirstLogFromCollection(jobCollectionId);
 
   if (!firstLogId) {
     return {
       root: null,
-      logs: logsMap,
+      logs: new Map(),
       isComplete: false,
       hasErrors: false,
       leaves: [],
       errors: [],
       allChildrenDiscovered: false,
       outputs: [],
+      fetchCount: 1,
     };
   }
 
-  // Build tree starting from root
-  const root = await buildTreeNode(firstLogId, logsMap, visited);
+  // Build tree recursively with caching
+  const visited = new Set<string>();
+  const fetchCount = { value: 1 }; // 1 for the job collection fetch above
+  const root = await buildTreeNode(firstLogId, visited, cache, fetchCount);
 
   if (!root) {
     return {
       root: null,
-      logs: logsMap,
+      logs: new Map(),
       isComplete: false,
       hasErrors: false,
       leaves: [],
       errors: [],
       allChildrenDiscovered: false,
       outputs: [],
+      fetchCount: fetchCount.value,
     };
   }
+
+  // Collect all logs into a flat map
+  const logsMap = new Map<string, KladosLogEntry>();
+  collectLogs(root, logsMap);
 
   // Collect leaves and analyze tree
   const leaves = collectLeaves(root);
@@ -507,6 +595,7 @@ export async function buildWorkflowTree(
     errors,
     allChildrenDiscovered,
     outputs,
+    fetchCount: fetchCount.value,
   };
 }
 
@@ -519,6 +608,8 @@ export async function buildWorkflowTree(
  * - Nested scatters
  * - Gather operations
  * - Mixed success/error branches
+ *
+ * Uses single-fetch-per-node optimization (1 GET per node instead of 2).
  *
  * Unlike `waitForKladosLog` which only checks the first log, this function
  * traverses the entire log tree and waits for ALL branches to complete.
@@ -564,6 +655,7 @@ export async function waitForWorkflowTree(
     errors: [],
     allChildrenDiscovered: false,
     outputs: [],
+    fetchCount: 0,
   };
 
   // Track stability: require the same log count for 2 consecutive polls
@@ -571,9 +663,13 @@ export async function waitForWorkflowTree(
   let stableCount = 0;
   let lastLogCount = 0;
 
+  // Incremental cache: stable subtrees are reused between polls
+  let cache: TreeCache | undefined;
+
   while (Date.now() - startTime < timeout) {
     try {
-      const tree = await buildWorkflowTree(jobCollectionId);
+      const tree = await buildWorkflowTree(jobCollectionId, cache);
+      cache = computeTreeCache(tree);
       lastTree = tree;
 
       // Call optional progress callback
