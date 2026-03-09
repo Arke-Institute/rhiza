@@ -395,6 +395,7 @@ export class KladosJob {
       outputs: outputIds.length > 0 ? outputIds : undefined,
       inputEntityIds: inputEntityIds.length > 0 ? inputEntityIds : undefined,
       linkEntitiesToLogs: this.config.linkEntitiesToLogs,
+      jobCollectionId: this.request.job_collection,
     });
 
     return {

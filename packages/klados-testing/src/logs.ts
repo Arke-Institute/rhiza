@@ -25,7 +25,10 @@ export async function getKladosLog(logId: string): Promise<KladosLogEntry> {
 }
 
 /**
- * Get the first_log relationship from a job collection
+ * Get the root log from a job collection
+ *
+ * Uses log_started relationships (sorted by started_at) to find the earliest log.
+ * Falls back to legacy first_log relationship for old workflows.
  *
  * This is more reliable than the indexed /collections/{id}/entities endpoint
  * because it doesn't have indexing lag.
@@ -37,19 +40,29 @@ export async function getFirstLogFromCollection(
   collectionId: string
 ): Promise<string | null> {
   const collection = await apiRequest<Entity>('GET', `/entities/${collectionId}`);
+  const rels = collection.relationships ?? [];
 
-  // Find the first_log relationship
-  const firstLogRel = collection.relationships?.find(
-    (r) => r.predicate === 'first_log'
-  );
+  // Prefer log_started relationships — root is the earliest by started_at
+  const logStartedRels = rels.filter((r) => r.predicate === 'log_started');
 
+  if (logStartedRels.length > 0) {
+    logStartedRels.sort((a, b) => {
+      const aTime = (a as any).properties?.started_at ?? '';
+      const bTime = (b as any).properties?.started_at ?? '';
+      return aTime.localeCompare(bTime);
+    });
+    return logStartedRels[0].peer;
+  }
+
+  // Fallback: legacy first_log relationship (old workflows)
+  const firstLogRel = rels.find((r) => r.predicate === 'first_log');
   return firstLogRel?.peer ?? null;
 }
 
 /**
  * Wait for and retrieve the klados log from a job collection
  *
- * Uses the first_log relationship on the job collection for reliable discovery
+ * Uses the log_started relationship on the job collection for reliable discovery
  * (bypasses indexing lag of the /collections/{id}/entities endpoint).
  *
  * Waits for the log to reach a terminal state (done or error) before returning.
@@ -80,7 +93,7 @@ export async function waitForKladosLog(
 
   while (Date.now() - startTime < timeout) {
     try {
-      // Use first_log relationship for reliable discovery
+      // Use log_started relationship for reliable discovery
       const firstLogId = await getFirstLogFromCollection(jobCollectionId);
 
       if (firstLogId) {
@@ -518,7 +531,7 @@ export async function buildWorkflowTree(
   jobCollectionId: string,
   cache?: TreeCache,
 ): Promise<WorkflowLogTree> {
-  // Find root via first_log relationship
+  // Find root via log_started relationship (earliest by started_at)
   const firstLogId = await getFirstLogFromCollection(jobCollectionId);
 
   if (!firstLogId) {

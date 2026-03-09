@@ -88,7 +88,7 @@ export async function createCollection(
  * Get entities in a collection
  *
  * Note: This endpoint has indexing lag. For log discovery, prefer
- * using `getFirstLogFromCollection` which uses the first_log relationship.
+ * using `getFirstLogFromCollection` which uses the log_started relationship.
  *
  * @param collectionId - Collection ID
  */

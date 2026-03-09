@@ -220,7 +220,7 @@ export interface LogTreeNode {
  * Result of building/traversing a workflow log tree
  */
 export interface WorkflowLogTree {
-  /** Root log node (found via first_log relationship) */
+  /** Root log node (found via earliest log_started relationship) */
   root: LogTreeNode | null;
   /** All discovered logs indexed by entity ID */
   logs: Map<string, KladosLogEntry>;

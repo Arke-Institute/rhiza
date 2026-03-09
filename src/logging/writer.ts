@@ -30,6 +30,7 @@ function queueAdditiveUpdates(
       predicate: string;
       peer: string;
       peer_type?: string;
+      properties?: Record<string, unknown>;
     }>;
     note?: string;
   }>
@@ -153,18 +154,20 @@ export async function writeKladosLog(
     }]);
   }
 
-  // 4. If this is the first log (no parent logs), add a first_log relationship
-  // from the job collection to this log for easy discovery (fire-and-forget)
-  if (!hasParentLogs) {
-    queueAdditiveUpdates(client, [{
-      entity_id: jobCollectionId,
-      relationships_add: [{
-        predicate: 'first_log',
-        peer: logEntityId,
-      }],
-      note: 'Add first_log relationship to job collection',
-    }]);
-  }
+  // 4. Add log_started relationship for progress tracking and root discovery (fire-and-forget)
+  queueAdditiveUpdates(client, [{
+    entity_id: jobCollectionId,
+    relationships_add: [{
+      predicate: 'log_started',
+      peer: logEntityId,
+      peer_type: 'klados_log',
+      properties: {
+        started_at: entry.started_at,
+        klados_id: entry.klados_id,
+      },
+    }],
+    note: 'Track log start for progress',
+  }]);
 
   // 5. Update parent logs to add sent_to relationship pointing to this log
   // This enables traversal using only outgoing relationships (no indexing lag)
@@ -246,6 +249,8 @@ export interface UpdateLogStatusOptions {
    * Only used when linkEntitiesToLogs is true.
    */
   inputEntityIds?: string[];
+  /** Job collection ID for progress tracking */
+  jobCollectionId?: string;
   /**
    * Link entities to this log via relationships:
    * - has_processing_log: input entities → log
@@ -307,6 +312,22 @@ export async function updateLogStatus(
       }],
     },
   });
+
+  // Write log_done to job collection for progress tracking (fire-and-forget)
+  if (status === 'done' && options?.jobCollectionId) {
+    queueAdditiveUpdates(client, [{
+      entity_id: options.jobCollectionId,
+      relationships_add: [{
+        predicate: 'log_done',
+        peer: logFileId,
+        peer_type: 'klados_log',
+        properties: {
+          completed_at: completedAt,
+        },
+      }],
+      note: 'Track log completion for progress',
+    }]);
+  }
 
   // Link input entities to this log (if enabled)
   // Done here (after job completes) to avoid race conditions with worker's CAS updates
