@@ -1,8 +1,9 @@
 /**
  * Log Writer - SDK utilities for writing klados logs
  *
- * Uses fire-and-forget additive updates for log relationships.
- * Status updates use additive (awaited to ensure request is sent).
+ * All additive updates are awaited to ensure completion before
+ * Tier 1 workers terminate. Uses /updates/additive for CAS-conflict-free
+ * updates (no retries needed, single POST per call).
  */
 
 import type { ArkeClient } from '@arke-institute/sdk';
@@ -12,36 +13,6 @@ import type {
   LogMessage,
   HandoffRecord,
 } from '../types';
-
-/**
- * Queue additive updates (fire-and-forget)
- *
- * Uses /updates/additive for CAS-conflict-free updates.
- * Returns immediately, updates are processed asynchronously by the server.
- *
- * This eliminates the CAS retry delays that were causing 5+ minute handoff times.
- */
-function queueAdditiveUpdates(
-  client: ArkeClient,
-  updates: Array<{
-    entity_id: string;
-    properties?: Record<string, unknown>;
-    relationships_add?: Array<{
-      predicate: string;
-      peer: string;
-      peer_type?: string;
-      properties?: Record<string, unknown>;
-    }>;
-    note?: string;
-  }>
-): void {
-  // Fire and forget - don't await
-  client.api.POST('/updates/additive', {
-    body: { updates },
-  }).catch((err) => {
-    console.error('[rhiza] Failed to queue additive updates:', err);
-  });
-}
 
 /**
  * Options for writing a klados log
@@ -145,17 +116,27 @@ export async function writeKladosLog(
     }
   }
 
-  // 3. Add relationships to the log entity if needed (fire-and-forget)
+  // 3. Batch: received_from on log + log_started on job collection (single request)
+  const additiveUpdates: Array<{
+    entity_id: string;
+    relationships_add: Array<{
+      predicate: string;
+      peer: string;
+      peer_type?: string;
+      properties?: Record<string, unknown>;
+    }>;
+    note: string;
+  }> = [];
+
   if (relationships.length > 0) {
-    queueAdditiveUpdates(client, [{
+    additiveUpdates.push({
       entity_id: logEntityId,
       relationships_add: relationships,
       note: 'Add received_from relationships to log',
-    }]);
+    });
   }
 
-  // 4. Add log_started relationship for progress tracking and root discovery (fire-and-forget)
-  queueAdditiveUpdates(client, [{
+  additiveUpdates.push({
     entity_id: jobCollectionId,
     relationships_add: [{
       predicate: 'log_started',
@@ -167,7 +148,11 @@ export async function writeKladosLog(
       },
     }],
     note: 'Track log start for progress',
-  }]);
+  });
+
+  await client.api.POST('/updates/additive', {
+    body: { updates: additiveUpdates },
+  });
 
   // 5. Update parent logs to add sent_to relationship pointing to this log
   // This enables traversal using only outgoing relationships (no indexing lag)
@@ -205,24 +190,28 @@ export async function writeKladosLog(
  * Update log entry with handoff records
  *
  * Called after handoffs are made to record what was invoked.
- * Uses fire-and-forget additive updates with deep merge.
+ * Uses additive updates with deep merge.
  */
-export function updateLogWithHandoffs(
+export async function updateLogWithHandoffs(
   client: ArkeClient,
   logFileId: string,
   handoffs: HandoffRecord[]
-): void {
-  queueAdditiveUpdates(client, [{
-    entity_id: logFileId,
-    properties: {
-      log_data: {
-        entry: {
-          handoffs,
+): Promise<void> {
+  await client.api.POST('/updates/additive', {
+    body: {
+      updates: [{
+        entity_id: logFileId,
+        properties: {
+          log_data: {
+            entry: {
+              handoffs,
+            },
+          },
         },
-      },
+        note: 'Add handoff records to log',
+      }],
     },
-    note: 'Add handoff records to log',
-  }]);
+  });
 }
 
 /**
@@ -252,6 +241,12 @@ export interface UpdateLogStatusOptions {
   /** Job collection ID for progress tracking */
   jobCollectionId?: string;
   /**
+   * Whether this is a terminal workflow node (done handoff or no then spec).
+   * When true and status is 'done', adds final_output relationship to job collection.
+   * @default false
+   */
+  isTerminal?: boolean;
+  /**
    * Link entities to this log via relationships:
    * - has_processing_log: input entities → log
    * - has_creation_log: output entities → log
@@ -265,8 +260,7 @@ export interface UpdateLogStatusOptions {
 /**
  * Update log entry status (e.g., to done or error)
  *
- * Returns a promise that resolves when the additive update is queued.
- * The actual update is eventually consistent.
+ * Awaits all additive updates to ensure they complete before the worker terminates.
  */
 export async function updateLogStatus(
   client: ArkeClient,
@@ -313,20 +307,38 @@ export async function updateLogStatus(
     },
   });
 
-  // Write log_done to job collection for progress tracking (fire-and-forget)
+  // Write log_done to job collection for progress tracking
+  // IMPORTANT: Must await to ensure completion before Tier 1 worker terminates
   if (status === 'done' && options?.jobCollectionId) {
-    queueAdditiveUpdates(client, [{
-      entity_id: options.jobCollectionId,
-      relationships_add: [{
-        predicate: 'log_done',
+    const relationships: Array<{ predicate: string; peer: string; peer_type: string; properties?: Record<string, unknown> }> = [{
+      predicate: 'log_done',
+      peer: logFileId,
+      peer_type: 'klados_log',
+      properties: {
+        completed_at: completedAt,
+      },
+    }];
+
+    // Add final_output for terminal workflow nodes (done handoff or no then spec)
+    if (options.isTerminal) {
+      relationships.push({
+        predicate: 'final_output',
         peer: logFileId,
         peer_type: 'klados_log',
-        properties: {
-          completed_at: completedAt,
-        },
-      }],
-      note: 'Track log completion for progress',
-    }]);
+      });
+    }
+
+    await client.api.POST('/updates/additive', {
+      body: {
+        updates: [{
+          entity_id: options.jobCollectionId,
+          relationships_add: relationships,
+          note: options.isTerminal
+            ? 'Track log completion and mark as final output'
+            : 'Track log completion for progress',
+        }],
+      },
+    });
   }
 
   // Link input entities to this log (if enabled)

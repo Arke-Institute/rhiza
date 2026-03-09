@@ -173,6 +173,9 @@ export interface FailKladosOptions {
 
   /** Log messages to include */
   messages?: import('../types').LogMessage[];
+
+  /** Job collection ID for adding final_error relationship */
+  jobCollectionId?: string;
 }
 
 /**
@@ -199,6 +202,7 @@ export async function failKlados(
   await updateLogStatus(client, options.logFileId, 'error', {
     logError,
     messages: options.messages,
+    jobCollectionId: options.jobCollectionId,
   });
 
   // Also update batch slot if applicable
@@ -213,5 +217,22 @@ export async function failKlados(
         retryable: kladosError.retryable,
       }
     );
+  }
+
+  // Add final_error relationship to job collection for O(1) failure discovery
+  if (options.jobCollectionId) {
+    await client.api.POST('/updates/additive', {
+      body: {
+        updates: [{
+          entity_id: options.jobCollectionId,
+          relationships_add: [{
+            predicate: 'final_error',
+            peer: options.logFileId,
+            peer_type: 'klados_log',
+          }],
+          note: 'Mark log as final error (failed workflow node)',
+        }],
+      },
+    });
   }
 }
