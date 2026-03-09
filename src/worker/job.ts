@@ -48,12 +48,12 @@ export interface KladosJobConfig {
   /**
    * Link entities to their processing logs via relationships.
    * When enabled, creates:
-   * - has_processing_log: input entity → log (when log is written)
-   * - has_creation_log: output entity → log (when job completes with outputs)
+   * - log_input: input entity → log (when job completes)
+   * - log_output: output entity → log (when job completes with outputs)
    *
    * Requires `entity:update` permission on target_collection.
    * Linking is best-effort - failures are logged but don't fail the job.
-   * @default false
+   * @default true
    */
   linkEntitiesToLogs?: boolean;
 }
@@ -376,7 +376,7 @@ export class KladosJob {
       messages: this.log.getMessages(),
       outputs: outputIds.length > 0 ? outputIds : undefined,
       inputEntityIds: inputEntityIds.length > 0 ? inputEntityIds : undefined,
-      linkEntitiesToLogs: this.config.linkEntitiesToLogs,
+      linkEntitiesToLogs: this.config.linkEntitiesToLogs ?? true,
       jobCollectionId: this.request.job_collection,
       isTerminal,
     });

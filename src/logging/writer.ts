@@ -179,7 +179,7 @@ export async function writeKladosLog(
     }
   }
 
-  // NOTE: Input entity linking (has_processing_log) is done in updateLogStatus,
+  // NOTE: Input entity linking (log_input) is done in updateLogStatus,
   // AFTER the job completes. This avoids race conditions where our relationship
   // addition changes the entity tip before the worker's CAS update.
 
@@ -234,7 +234,7 @@ export interface UpdateLogStatusOptions {
   /** Output entity IDs produced by this job */
   outputs?: string[];
   /**
-   * Input entity IDs that were processed (for has_processing_log).
+   * Input entity IDs that were processed (for log_input relationship).
    * Only used when linkEntitiesToLogs is true.
    */
   inputEntityIds?: string[];
@@ -248,11 +248,11 @@ export interface UpdateLogStatusOptions {
   isTerminal?: boolean;
   /**
    * Link entities to this log via relationships:
-   * - has_processing_log: input entities → log
-   * - has_creation_log: output entities → log
+   * - log_input: input entities → log
+   * - log_output: output entities → log
    *
    * Best-effort - failures are logged but don't fail the job.
-   * @default false
+   * @default true
    */
   linkEntitiesToLogs?: boolean;
 }
@@ -351,11 +351,11 @@ export async function updateLogStatus(
           updates: inputEntityIds.map(entityId => ({
             entity_id: entityId,
             relationships_add: [{
-              predicate: 'has_processing_log',
+              predicate: 'log_input',
               peer: logFileId,
               peer_type: 'klados_log',
             }],
-            note: 'Link input entity to processing log',
+            note: 'Link input entity to log',
           })),
         },
       });
@@ -374,11 +374,11 @@ export async function updateLogStatus(
           updates: outputs.map(entityId => ({
             entity_id: entityId,
             relationships_add: [{
-              predicate: 'has_creation_log',
+              predicate: 'log_output',
               peer: logFileId,
               peer_type: 'klados_log',
             }],
-            note: 'Link output entity to creation log',
+            note: 'Link output entity to log',
           })),
         },
       });
