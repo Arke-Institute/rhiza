@@ -92,13 +92,13 @@ describe('getKladosConfig', () => {
 
   describe('with additional env vars', () => {
     it('ignores unrelated env vars', () => {
-      const env: NetworkEnv = {
+      const env = {
         AGENT_ID: 'test-id',
         AGENT_VERSION: '1.0.0',
         ARKE_AGENT_KEY: 'ak_test',
         GEMINI_API_KEY: 'gemini_key',
         SOME_OTHER_VAR: 'value',
-      };
+      } as NetworkEnv;
 
       const config = getKladosConfig(env, 'test');
 

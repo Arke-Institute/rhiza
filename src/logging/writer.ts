@@ -33,6 +33,9 @@ export interface WriteLogOptions {
   /** Agent info */
   agentId: string;
   agentVersion: string;
+
+  /** Human-readable agent label (used for log entity label) */
+  agentLabel?: string;
 }
 
 /**
@@ -74,7 +77,7 @@ export async function writeKladosLog(
   };
 
   // Generate a human-readable label for the log
-  const logLabel = `${entry.klados_id} - ${entry.job_id}`;
+  const logLabel = options.agentLabel || `${entry.klados_id} - ${entry.job_id}`;
 
   // 1. Create entity with log data
   const { data: logEntity, error: createError } = await client.api.POST('/entities', {

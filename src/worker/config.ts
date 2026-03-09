@@ -25,8 +25,6 @@ export interface NetworkEnv {
   ARKE_AGENT_KEY_TEST?: string;
   ARKE_AGENT_KEY_MAIN?: string;
 
-  // Allow additional properties (for other env vars like GEMINI_API_KEY)
-  [key: string]: unknown;
 }
 
 /**

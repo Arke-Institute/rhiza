@@ -123,13 +123,19 @@ export class KladosJob {
   private constructor(
     request: KladosRequest,
     config: KladosJobConfig,
-    rhizaConfig?: RhizaRuntimeConfig
+    rhizaConfig?: RhizaRuntimeConfig,
+    options?: { logFileId?: string }
   ) {
     this.request = request;
     this.config = config;
     this.rhizaConfig = rhizaConfig;
     this.log = new KladosLogger();
     this.logId = `log_${generateId()}`;
+
+    // Resume from existing log if provided (for DO alarm restarts)
+    if (options?.logFileId) {
+      this.logFileId = options.logFileId;
+    }
 
     // Create Arke client with correct network
     this.client = new ArkeClient({
@@ -154,14 +160,16 @@ export class KladosJob {
    * @param request - The incoming KladosRequest
    * @param config - Job configuration
    * @param rhizaConfig - Optional rhiza runtime configuration (for scatter utility delegation)
+   * @param options - Optional resume state (for DO alarm restarts)
    * @returns A new KladosJob instance
    */
   static accept(
     request: KladosRequest,
     config: KladosJobConfig,
-    rhizaConfig?: RhizaRuntimeConfig
+    rhizaConfig?: RhizaRuntimeConfig,
+    options?: { logFileId?: string }
   ): KladosJob {
-    return new KladosJob(request, config, rhizaConfig);
+    return new KladosJob(request, config, rhizaConfig, options);
   }
 
   /**
@@ -184,6 +192,14 @@ export class KladosJob {
    */
   get recurseDepth(): number {
     return this.request.rhiza?.recurse_depth ?? 0;
+  }
+
+  /**
+   * The log entity ID (set after start(), null before).
+   * Used by DO workers to persist state between alarm cycles.
+   */
+  get logEntityId(): string | null {
+    return this.logFileId;
   }
 
   /**
@@ -223,45 +239,63 @@ export class KladosJob {
    *
    * For advanced use cases where you need more control over the lifecycle.
    * Most users should use `run()` instead.
+   *
+   * If logFileId was provided via accept() options (DO resumption),
+   * skips log creation since the log already exists.
    */
   async start(): Promise<void> {
     if (this.state !== 'accepted') {
       throw new Error(`Cannot start job in state: ${this.state}`);
     }
 
-    // Build log entry
-    const logEntry: KladosLogEntry = {
-      id: this.logId,
-      type: 'klados_log',
-      klados_id: this.config.agentId,
-      rhiza_id: this.request.rhiza?.id,
-      job_id: this.request.job_id,
-      started_at: new Date().toISOString(),
-      status: 'running',
-      received: {
-        target_entity: this.request.target_entity,
-        target_entities: this.request.target_entities,
-        target_collection: this.request.target_collection,
-        from_logs: this.request.rhiza?.parent_logs,
-        batch: this.request.rhiza?.batch,
-        scatter_total: this.request.rhiza?.scatter_total,
-      },
-    };
+    // Skip log creation if resuming (logFileId already set from previous alarm)
+    if (!this.logFileId) {
+      // Fetch klados entity label for human-readable log labels (best-effort)
+      let agentLabel: string | undefined;
+      try {
+        const { data } = await this.client.api.GET('/entities/{id}', {
+          params: { path: { id: this.config.agentId } },
+        });
+        agentLabel = data?.properties?.label as string | undefined;
+      } catch {
+        // Best-effort — fall back to ID-based label
+      }
 
-    // Write initial log entry
-    // Use relationship updater service for fire-and-forget parent log updates
-    // NOTE: Entity linking (has_processing_log, has_creation_log) happens in complete(),
-    // AFTER the job finishes, to avoid race conditions with worker's CAS updates.
-    const { fileId } = await writeKladosLog({
-      client: this.client,
-      jobCollectionId: this.request.job_collection,
-      entry: logEntry,
-      messages: this.log.getMessages(),
-      agentId: this.config.agentId,
-      agentVersion: this.config.agentVersion,
-    });
+      // Build log entry
+      const logEntry: KladosLogEntry = {
+        id: this.logId,
+        type: 'klados_log',
+        klados_id: this.config.agentId,
+        rhiza_id: this.request.rhiza?.id,
+        job_id: this.request.job_id,
+        started_at: new Date().toISOString(),
+        status: 'running',
+        received: {
+          target_entity: this.request.target_entity,
+          target_entities: this.request.target_entities,
+          target_collection: this.request.target_collection,
+          from_logs: this.request.rhiza?.parent_logs,
+          batch: this.request.rhiza?.batch,
+          scatter_total: this.request.rhiza?.scatter_total,
+        },
+      };
 
-    this.logFileId = fileId;
+      // Write initial log entry
+      // NOTE: Entity linking (log_input, log_output) happens in complete(),
+      // AFTER the job finishes, to avoid race conditions with worker's CAS updates.
+      const { fileId } = await writeKladosLog({
+        client: this.client,
+        jobCollectionId: this.request.job_collection,
+        entry: logEntry,
+        messages: this.log.getMessages(),
+        agentId: this.config.agentId,
+        agentVersion: this.config.agentVersion,
+        agentLabel,
+      });
+
+      this.logFileId = fileId;
+    }
+
     this.state = 'started';
 
     // Fetch rhiza flow if in a workflow
