@@ -344,49 +344,80 @@ export async function updateLogStatus(
     });
   }
 
-  // Link input entities to this log (if enabled)
+  // Link entities to/from this log (if enabled)
   // Done here (after job completes) to avoid race conditions with worker's CAS updates
   // IMPORTANT: Must await to ensure completion before worker terminates
-  if (options?.linkEntitiesToLogs && inputEntityIds && inputEntityIds.length > 0) {
-    try {
-      await client.api.POST('/updates/additive', {
-        body: {
-          updates: inputEntityIds.map(entityId => ({
-            entity_id: entityId,
-            relationships_add: [{
-              predicate: 'log_input',
-              peer: logFileId,
-              peer_type: 'klados_log',
-            }],
-            note: 'Link input entity to log',
-          })),
-        },
-      });
-    } catch (err) {
-      console.warn('[rhiza] Failed to link input entities to log:', (err as Error).message || err);
-    }
-  }
+  if (options?.linkEntitiesToLogs) {
+    // Forward direction: log → entities (consumed/produced)
+    const logRelationships: Array<{ predicate: string; peer: string }> = [];
 
-  // Link output entities to this log (if enabled)
-  // Best-effort - don't fail job if this fails (e.g., missing entity:update permission)
-  // IMPORTANT: Must await to ensure completion before worker terminates
-  if (options?.linkEntitiesToLogs && outputs && outputs.length > 0) {
-    try {
-      await client.api.POST('/updates/additive', {
-        body: {
-          updates: outputs.map(entityId => ({
-            entity_id: entityId,
-            relationships_add: [{
-              predicate: 'log_output',
-              peer: logFileId,
-              peer_type: 'klados_log',
+    if (inputEntityIds && inputEntityIds.length > 0) {
+      for (const entityId of inputEntityIds) {
+        logRelationships.push({ predicate: 'consumed', peer: entityId });
+      }
+    }
+
+    if (outputs && outputs.length > 0) {
+      for (const entityId of outputs) {
+        logRelationships.push({ predicate: 'produced', peer: entityId });
+      }
+    }
+
+    if (logRelationships.length > 0) {
+      try {
+        await client.api.POST('/updates/additive', {
+          body: {
+            updates: [{
+              entity_id: logFileId,
+              relationships_add: logRelationships,
+              note: 'Add consumed/produced relationships to log',
             }],
-            note: 'Link output entity to log',
-          })),
-        },
-      });
-    } catch (err) {
-      console.warn('[rhiza] Failed to link output entities to log:', (err as Error).message || err);
+          },
+        });
+      } catch (err) {
+        console.warn('[rhiza] Failed to add consumed/produced relationships to log:', (err as Error).message || err);
+      }
+    }
+
+    // Reverse direction: entities → log (log_input/log_output)
+    if (inputEntityIds && inputEntityIds.length > 0) {
+      try {
+        await client.api.POST('/updates/additive', {
+          body: {
+            updates: inputEntityIds.map(entityId => ({
+              entity_id: entityId,
+              relationships_add: [{
+                predicate: 'log_input',
+                peer: logFileId,
+                peer_type: 'klados_log',
+              }],
+              note: 'Link input entity to log',
+            })),
+          },
+        });
+      } catch (err) {
+        console.warn('[rhiza] Failed to link input entities to log:', (err as Error).message || err);
+      }
+    }
+
+    if (outputs && outputs.length > 0) {
+      try {
+        await client.api.POST('/updates/additive', {
+          body: {
+            updates: outputs.map(entityId => ({
+              entity_id: entityId,
+              relationships_add: [{
+                predicate: 'log_output',
+                peer: logFileId,
+                peer_type: 'klados_log',
+              }],
+              note: 'Link output entity to log',
+            })),
+          },
+        });
+      } catch (err) {
+        console.warn('[rhiza] Failed to link output entities to log:', (err as Error).message || err);
+      }
     }
   }
 }
