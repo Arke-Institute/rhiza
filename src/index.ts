@@ -142,6 +142,7 @@ export {
 
 export {
   interpretThen,
+  mergeStepInput,
   type HandoffAction,
   type InterpretContext,
   type InterpretResult,

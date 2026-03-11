@@ -330,7 +330,6 @@ async function handleScatter(
   if (shouldDelegate) {
     // Build invoke options for delegation
     const newPath = [...path, targetStepName];
-    const stepInput = targetStep.input;  // Get step-specific input
     const invokeOptions: InvokeOptions = {
       targetCollection: context.targetCollection,
       jobCollectionId,
@@ -338,7 +337,7 @@ async function handleScatter(
       expiresIn,
       network,
       parentLogs: [fromLogId],
-      input: stepInput,  // Pass step-specific input
+      input: mergeStepInput(context, targetStepName),
       rhiza: {
         id: rhizaId,
         path: newPath,
@@ -653,7 +652,7 @@ async function handleScatter(
 
       // Build invoke options for this target
       const newPath = [...path, stepName];
-      const stepInput = step.input;  // Get step-specific input
+      const mergedInput = mergeStepInput(context, stepName);
 
       // Find the original indices for these items
       for (const item of items) {
@@ -666,7 +665,7 @@ async function handleScatter(
           expiresIn,
           network,
           parentLogs: [fromLogId],
-          input: stepInput,  // Pass step-specific input
+          input: mergedInput,
           batch: {
             id: scatterResult.batchId,
             index: originalIndex,
@@ -763,7 +762,6 @@ async function handleScatter(
     // Build invoke options for this target
     // Include scatterTotal so children know CAS concurrency for parent log updates
     const newPath = [...path, stepName];
-    const stepInput = step.input;  // Get step-specific input
     const invokeOptions: InvokeOptions = {
       targetCollection: context.targetCollection,
       jobCollectionId,
@@ -771,7 +769,7 @@ async function handleScatter(
       expiresIn,
       network,
       parentLogs: [fromLogId],
-      input: stepInput,  // Pass step-specific input
+      input: mergeStepInput(context, stepName),
       rhiza: {
         id: rhizaId,
         path: newPath,
@@ -1013,6 +1011,55 @@ function extractEntityIds(outputs: Output[]): string[] {
 }
 
 /**
+ * Merge input for a target step using three-level priority:
+ *
+ * 1. Flow definition step input (workflow author defaults) — lowest priority
+ * 2. Invocation global input (user overrides, minus 'steps' key)
+ * 3. Invocation per-step overrides (from input.steps[stepName]) — highest priority
+ *
+ * The 'steps' key is preserved in the merged result so downstream handoffs
+ * can resolve per-step overrides for their own targets.
+ *
+ * @param context - The interpretation context (contains propagated input)
+ * @param targetStepName - The step name to resolve input for
+ * @returns Merged input or undefined if no input at any level
+ */
+export function mergeStepInput(
+  context: InterpretContext,
+  targetStepName: string
+): Record<string, unknown> | undefined {
+  const flowStepInput = context.flow[targetStepName]?.input;
+
+  const contextInput = context.input;
+  const stepsOverrides = contextInput?.steps as Record<string, Record<string, unknown>> | undefined;
+  const stepOverride = stepsOverrides?.[targetStepName];
+
+  // Global input = context.input minus the 'steps' key
+  const globalInput = contextInput
+    ? Object.fromEntries(Object.entries(contextInput).filter(([k]) => k !== 'steps'))
+    : undefined;
+
+  // Check if there's anything to merge
+  const hasGlobal = globalInput && Object.keys(globalInput).length > 0;
+  const hasAny = flowStepInput || hasGlobal || stepOverride;
+  if (!hasAny) return undefined;
+
+  // Three-level merge: flow defaults < global < per-step
+  const merged: Record<string, unknown> = {
+    ...flowStepInput,
+    ...(hasGlobal ? globalInput : undefined),
+    ...stepOverride,
+  };
+
+  // Preserve 'steps' in propagated input so downstream handoffs can resolve their targets
+  if (stepsOverrides && Object.keys(stepsOverrides).length > 0) {
+    merged.steps = stepsOverrides;
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/**
  * Build invoke options from context
  *
  * @param context - The interpretation context
@@ -1024,15 +1071,11 @@ function buildInvokeOptions(context: InterpretContext, targetStepName?: string):
     ? [...context.path, targetStepName]
     : context.path;
 
-  // Get the target step's input configuration (if defined in the flow)
-  const targetStep = targetStepName ? context.flow[targetStepName] : undefined;
-  const stepInput = targetStep?.input;
-
-  // Merge inputs: workflow input as base, step-specific input overrides
-  // This allows workflow-level config to flow through, with per-step overrides
-  const mergedInput = context.input || stepInput
-    ? { ...context.input, ...stepInput }
-    : undefined;
+  // Merge input using three-level priority when we have a target step,
+  // otherwise pass through context input as-is
+  const mergedInput = targetStepName
+    ? mergeStepInput(context, targetStepName)
+    : context.input;
 
   return {
     targetCollection: context.targetCollection,
@@ -1042,8 +1085,8 @@ function buildInvokeOptions(context: InterpretContext, targetStepName?: string):
     network: context.network,
     parentLogs: [context.fromLogId],
     batch: context.batchContext,
-    recurseDepth: context.recurseDepth,  // Forward recurse depth unchanged
-    input: mergedInput,  // Workflow input + step-specific overrides
+    recurseDepth: context.recurseDepth,
+    input: mergedInput,
     rhiza: {
       id: context.rhizaId,
       path: newPath,
