@@ -29,7 +29,7 @@
     }
   },
   "devDependencies": {
-    "@arke-institute/sdk": "^3.6.13",
+    "@arke-institute/sdk": "^3.6.15",
     "typescript": "^5.7.2"
   },
   "keywords": [
